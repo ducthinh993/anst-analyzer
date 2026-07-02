@@ -53,9 +53,10 @@ func (c closure) Size() int { return len(c.Used) }
 func buildClosure(root string) closure {
 	frontier := &lockfilekit.Frontier{}
 
-	// A build hook can synthesize imports that never appear in static source.
-	if fileExists(filepath.Join(root, "build.dart")) ||
-		fileExists(filepath.Join(root, "hook", "build.dart")) {
+	// A build hook — in the project OR in ANY package it depends on — can
+	// synthesize cross-package imports that never appear in static source, so a
+	// hook anywhere in the walked closure forbids NOT_REACHABLE project-wide.
+	if hasBuildHook(root) {
 		frontier.Add("build.dart build hook may synthesize imports")
 	}
 
@@ -81,14 +82,23 @@ func buildClosure(root string) closure {
 			}
 			visited.Add(pkg)
 
-			dir, found := pc[pkg]
-			if !found || !dirExists(dir) {
-				// A used package whose source we cannot locate/read means the
-				// transitive walk is not proven complete → no NOT_REACHABLE.
+			loc, found := pc[pkg]
+			if !found {
+				// A used package absent from package_config means the transitive
+				// walk is not proven complete → no NOT_REACHABLE.
 				transitiveIncomplete = true
 				continue
 			}
-			tokens, inc := scanDir(dir, frontier)
+			// A dependency's build hook lives at its root, not under lib/, so the
+			// source walk below never sees it: check it explicitly.
+			if hasBuildHook(loc.Root) {
+				frontier.Add("dependency build.dart build hook may synthesize imports")
+			}
+			if !dirExists(loc.Source) {
+				transitiveIncomplete = true
+				continue
+			}
+			tokens, inc := scanDir(loc.Source, frontier)
 			if inc {
 				parseIncomplete = true
 			}
@@ -143,6 +153,13 @@ func scanDir(dir string, frontier *lockfilekit.Frontier) (lockfilekit.Set, bool)
 		incomplete = true
 	}
 	return used, incomplete
+}
+
+// hasBuildHook reports whether dir contains a Dart build hook (build.dart or
+// hook/build.dart), which can synthesize imports invisible to a static scan.
+func hasBuildHook(dir string) bool {
+	return fileExists(filepath.Join(dir, "build.dart")) ||
+		fileExists(filepath.Join(dir, "hook", "build.dart"))
 }
 
 func fileExists(p string) bool {

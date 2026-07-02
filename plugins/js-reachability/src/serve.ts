@@ -48,7 +48,10 @@ option go_package = "google.golang.org/protobuf/types/known/emptypb";
 message Empty {}
 `;
 
-// Protocol version this plugin implements (must match contract.ProtocolVersion).
+// Contract version this plugin implements. The host accepts any plugin whose
+// major matches and whose minor is <= the host's (contract.Compatible), so this
+// stays at the minor this plugin actually implements — it does not need to
+// track the host's latest minor.
 const PROTOCOL_VERSION = "0.1";
 const PLUGIN_VERSION = "0.1.0";
 const PLUGIN_NAME = "js-reachability";

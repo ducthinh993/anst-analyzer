@@ -215,6 +215,18 @@ func (s *scanner) readString(raw bool) string {
 			}
 			continue
 		}
+		// String interpolation `${ ... }` embeds real code (which may itself
+		// contain strings that reuse this string's quote). Scan it as code so a
+		// frontier construct hidden inside — e.g. `"${Isolate.spawnUri("u")}"` —
+		// is detected and, crucially, so the inner same-quote string cannot desync
+		// this string's state (which would swallow the call). The `$name` short
+		// form interpolates a bare identifier and can hold no call, so only `${` is
+		// treated as code.
+		if !raw && c == '$' && s.peek(1) == '{' {
+			s.i += 2
+			s.scanInterpolationExpr()
+			continue
+		}
 		if triple {
 			if c == q && s.peek(1) == q && s.peek(2) == q {
 				s.i += 3
@@ -235,6 +247,43 @@ func (s *scanner) readString(raw bool) string {
 		s.i++
 	}
 	return b.String()
+}
+
+// scanInterpolationExpr consumes a string-interpolation expression, entered just
+// after `${`, up to the matching `}`. It scans the enclosed code with balanced
+// brace tracking, descending into nested strings (which may reopen `${...}`),
+// comments, and braces, and flags the spawnUri dynamism marker. It deliberately
+// does NOT run directive collection here — directives cannot appear inside an
+// interpolation, and skipping it avoids any chance of a mis-collected keyword
+// running past the interpolation's closing brace.
+func (s *scanner) scanInterpolationExpr() {
+	depth := 1
+	for s.i < len(s.src) && depth > 0 {
+		c := s.src[s.i]
+		switch {
+		case c == '{':
+			depth++
+			s.i++
+		case c == '}':
+			depth--
+			s.i++
+		case c == '/' && s.peek(1) == '/':
+			s.skipLineComment()
+		case c == '/' && s.peek(1) == '*':
+			s.skipBlockComment()
+		case c == 'r' && (s.peek(1) == '\'' || s.peek(1) == '"'):
+			s.i++
+			s.readString(true)
+		case c == '\'' || c == '"':
+			s.readString(false)
+		case isIdentStart(c):
+			if s.readIdent() == "spawnUri" {
+				s.out.SpawnUri = true
+			}
+		default:
+			s.i++
+		}
+	}
 }
 
 func (s *scanner) readIdent() string {

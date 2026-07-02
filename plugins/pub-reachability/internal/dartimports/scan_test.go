@@ -160,6 +160,27 @@ void go() async {
 	assert.True(t, s.SpawnUri)
 }
 
+func TestScan_SpawnUriInStringInterpolationTrips(t *testing.T) {
+	// The interpolation embeds a real call whose inner string reuses the outer
+	// quote; a lexer that does not model ${...} would desync on the inner quote
+	// and miss the call. It must be detected (a frontier miss is a false NR).
+	s := ScanSource([]byte(`var s = "pre ${Isolate.spawnUri("u")} post";`))
+	assert.True(t, s.SpawnUri)
+}
+
+func TestScan_SpawnUriInNestedInterpolationTrips(t *testing.T) {
+	s := ScanSource([]byte(`var s = "a ${f("b ${Isolate.spawnUri("u")} c")} d";`))
+	assert.True(t, s.SpawnUri)
+}
+
+func TestScan_InterpolationDoesNotSwallowLaterImports(t *testing.T) {
+	// Modeling ${...} must not desync the file: a later import directive is still
+	// captured after an interpolation with a same-quote inner string.
+	src := `var s = "x ${g("y")} z";
+import 'package:after/after.dart';`
+	assert.Equal(t, []string{"after"}, pkgs(t, src))
+}
+
 func TestScan_SpawnUriInStringOrCommentDoesNotTrip(t *testing.T) {
 	s := ScanSource([]byte(`
 // call Isolate.spawnUri here later

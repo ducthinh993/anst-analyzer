@@ -97,15 +97,19 @@ func assertUnknownIncomplete(t *testing.T, f *commit0v1.Finding) {
 
 // ── unit: package_config resolution ───────────────────────────────────────────
 
-func TestResolvePackageDir(t *testing.T) {
+func TestResolvePackageDirs(t *testing.T) {
 	dartTool := filepath.FromSlash("/proj/.dart_tool")
-	assert.Equal(t, filepath.FromSlash("/abs/foo/lib"),
-		resolvePackageDir(dartTool, "file:///abs/foo", "lib/"))
-	assert.Equal(t, filepath.Join(dartTool, filepath.FromSlash("../foo/lib")),
-		resolvePackageDir(dartTool, "../foo", "lib/"))
+
+	// file:// rootUri resolves to an absolute root; source is root/packageUri.
+	rootFoo := resolvePackageRoot(dartTool, "file:///abs/foo")
+	assert.Equal(t, filepath.FromSlash("/abs/foo"), rootFoo)
+	assert.Equal(t, filepath.FromSlash("/abs/foo/lib"), resolveSourceDir(rootFoo, "lib/"))
+
+	// Relative rootUri resolves against the .dart_tool dir.
+	rootBar := resolvePackageRoot(dartTool, "../bar")
+	assert.Equal(t, filepath.Join(dartTool, filepath.FromSlash("../bar")), rootBar)
 	// Empty packageUri defaults to lib/.
-	assert.Equal(t, filepath.Join(dartTool, filepath.FromSlash("../bar/lib")),
-		resolvePackageDir(dartTool, "../bar", ""))
+	assert.Equal(t, filepath.Join(dartTool, filepath.FromSlash("../bar/lib")), resolveSourceDir(rootBar, ""))
 }
 
 func TestLoadPackageConfig_AbsentIsIncomplete(t *testing.T) {
@@ -210,6 +214,24 @@ func TestDecide_BuildHookFrontier_Unknown(t *testing.T) {
 	got := run(t, root, false, adv("CVE-V", "vulnerable"))
 	assertUnknownIncomplete(t, got["vulnerable"])
 	assert.Contains(t, got["vulnerable"].GetProperties()["reason"], "build hook")
+}
+
+// A build hook in a DEPENDENCY (not the project root) can synthesize
+// cross-package imports the static walk never sees, so it must forbid
+// NOT_REACHABLE project-wide — the dependency hook lives at the dep root, not
+// under its lib/, so the source walk alone would miss it.
+func TestDecide_DependencyBuildHookFrontier_Unknown(t *testing.T) {
+	tmp := t.TempDir()
+	root := projectRoot(t, tmp, "a")
+	dirA := depDir(t, tmp, "a")
+	mkfile(t, filepath.Join(dirA, "hook", "build.dart"), "void main() {}\n")
+	writePackageConfig(t, root, map[string]string{"app": root, "a": dirA})
+
+	got := run(t, root, false, adv("CVE-V", "vulnerable"), adv("CVE-A", "a"))
+	assertUnknownIncomplete(t, got["vulnerable"])
+	assert.Contains(t, got["vulnerable"].GetProperties()["reason"], "build hook")
+	// The imported dependency itself remains a definitive positive.
+	assert.Equal(t, commit0v1.Confidence_CONFIDENCE_PACKAGE_REACHABLE, got["a"].GetConfidence())
 }
 
 func TestDecide_AbsentGeneratedPart_Unknown(t *testing.T) {
