@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/commit0-dev/commit0-analyzer/internal/advisory"
@@ -211,7 +212,28 @@ var ecosystemRegistry = []EcosystemAdapter{
 
 // RegisterEcosystemAdapter appends an adapter to the global registry.
 // Must be called only from init() functions (before any concurrent use).
+//
+// It panics on a soundness-violating registration rather than degrade quietly:
+//   - A Language missing from orderedLanguages would be detectable
+//     (DetectFiles) yet invisible to warnUnsupportedEcosystems, so a project
+//     using it could scan nothing and still exit 0 — a silent false-clean.
+//   - A lockfile-static adapter (ParseLockfile != nil) claiming a symbol
+//     ceiling would stamp SYMBOL_REACHABLE on findings without any call-graph
+//     proof; lockfile parsing can only ever establish package presence.
 func RegisterEcosystemAdapter(a EcosystemAdapter) {
+	if !isKnownLanguage(a.Language) {
+		panic(fmt.Sprintf(
+			"RegisterEcosystemAdapter: language %q is not listed in orderedLanguages; "+
+				"a detected-but-unlisted ecosystem would be skipped without a warning "+
+				"and produce a false-clean scan — add it to orderedLanguages first",
+			a.Language))
+	}
+	if a.ParseLockfile != nil && a.MaxConfidence != ceilingPackage {
+		panic(fmt.Sprintf(
+			"RegisterEcosystemAdapter: lockfile-static adapter %q must declare "+
+				"ceilingPackage; lockfile parsing cannot prove symbol-level reachability",
+			a.Language))
+	}
 	ecosystemRegistry = append(ecosystemRegistry, a)
 }
 

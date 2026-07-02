@@ -92,12 +92,14 @@ Registries in this codebase fail loudly rather than degrade quietly, because
 a silently-missing entry would be a soundness regression discovered only in
 production:
 
-- `internal/cli/ecosystem_registry.go` — the `EcosystemAdapter` registry is
-  the single source of ecosystem taxonomy: detection, `--language`
-  validation, and the scan loop all derive from it, so an unregistered
-  ecosystem can never be detected-but-unscanned. The one-adapter-per-language
-  invariant is test-enforced. When adding a new lockfile-static ecosystem,
-  register it in an `init()` alongside its adapter file.
+- `internal/cli/ecosystem_registry.go` — `RegisterEcosystemAdapter` panics on
+  a `Language` missing from `orderedLanguages` (a detected-but-unlisted
+  ecosystem would be skipped without a warning — a false-clean scan) and on a
+  lockfile-static adapter declaring a symbol-level ceiling (lockfile parsing
+  cannot prove reachability). The one-adapter-per-language invariant is
+  test-enforced. When adding a new lockfile-static ecosystem, add its
+  language to `orderedLanguages` and register the adapter in an `init()`
+  alongside its adapter file.
 - `internal/advisory/comparator_registry.go` — panics on duplicate
   comparator registration for the same ecosystem. When adding a new
   ecosystem's version comparator, register it here and add the

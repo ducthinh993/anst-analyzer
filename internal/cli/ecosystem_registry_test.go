@@ -481,24 +481,65 @@ func TestEcosystemAdapter_NormalizeName_FuncIsCalledWithDepName(t *testing.T) {
 	})
 }
 
-// ── registration never panics ─────────────────────────────────────────────────
+// ── registration guards ───────────────────────────────────────────────────────
 
-// TestRegisterEcosystemAdapter_NeverPanics verifies that registration is a plain
-// append that never panics — even for a language not listed in orderedLanguages.
-// The init-time panic guard was removed: the registry-keyed set has no
-// unhandled-language failure mode. A registered adapter is always detected
-// (DetectFiles) and run (lockfileAdapters loop keys on eco.active by construction),
-// so there is no "silent no-op detection trap" for a switch to leave uncovered.
-func TestRegisterEcosystemAdapter_NeverPanics(t *testing.T) {
+// TestRegisterEcosystemAdapter_ValidRegistration verifies that a well-formed
+// adapter (known language, lockfile parser with a package ceiling) registers
+// without panicking.
+func TestRegisterEcosystemAdapter_ValidRegistration(t *testing.T) {
 	withCleanRegistry(t, func() {
 		assert.NotPanics(t, func() {
 			RegisterEcosystemAdapter(EcosystemAdapter{
 				Ecosystem:     "NuGet",
-				Language:      "nuget", // not an orderedLanguages value
+				Language:      "dotnet",
 				DetectFiles:   []string{"*.csproj"},
 				MaxConfidence: ceilingPackage,
 				ParseLockfile: func(_ string) ([]ResolvedDep, bool, error) { return nil, true, nil },
 			})
-		}, "registration is a plain append; it must never panic")
+		})
+	})
+}
+
+// TestRegisterEcosystemAdapter_PanicsOnUnknownLanguage: a Language missing from
+// orderedLanguages would be detectable via DetectFiles but invisible to
+// warnUnsupportedEcosystems (which iterates orderedLanguages only), so a
+// project using it could scan nothing and still exit 0. Registration must fail
+// loudly at init time instead of shipping that silent false-clean.
+func TestRegisterEcosystemAdapter_PanicsOnUnknownLanguage(t *testing.T) {
+	withCleanRegistry(t, func() {
+		assert.PanicsWithValue(t,
+			`RegisterEcosystemAdapter: language "nuget" is not listed in orderedLanguages; `+
+				`a detected-but-unlisted ecosystem would be skipped without a warning `+
+				`and produce a false-clean scan — add it to orderedLanguages first`,
+			func() {
+				RegisterEcosystemAdapter(EcosystemAdapter{
+					Ecosystem:     "NuGet",
+					Language:      "nuget", // not an orderedLanguages value
+					DetectFiles:   []string{"*.csproj"},
+					MaxConfidence: ceilingPackage,
+					ParseLockfile: func(_ string) ([]ResolvedDep, bool, error) { return nil, true, nil },
+				})
+			})
+	})
+}
+
+// TestRegisterEcosystemAdapter_PanicsOnLockfileSymbolCeiling: lockfile parsing
+// can only establish package presence, never a call-graph proof. An adapter
+// with ParseLockfile set must not be able to stamp SYMBOL_REACHABLE onto
+// findings by declaring a symbol ceiling.
+func TestRegisterEcosystemAdapter_PanicsOnLockfileSymbolCeiling(t *testing.T) {
+	withCleanRegistry(t, func() {
+		assert.PanicsWithValue(t,
+			`RegisterEcosystemAdapter: lockfile-static adapter "dotnet" must declare `+
+				`ceilingPackage; lockfile parsing cannot prove symbol-level reachability`,
+			func() {
+				RegisterEcosystemAdapter(EcosystemAdapter{
+					Ecosystem:     "NuGet",
+					Language:      "dotnet",
+					DetectFiles:   []string{"*.csproj"},
+					MaxConfidence: ceilingSymbol,
+					ParseLockfile: func(_ string) ([]ResolvedDep, bool, error) { return nil, true, nil },
+				})
+			})
 	})
 }
