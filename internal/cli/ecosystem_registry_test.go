@@ -346,7 +346,7 @@ func TestResolvedDep_ZeroValue(t *testing.T) {
 // runtime-reachable vulnerability through the dev_only gate (false-clean pass).
 func TestMergeDepType_EmptyDepType_TreatedAsRuntime(t *testing.T) {
 	m := map[string]string{"VULN-1": "dev"} // advisory already tagged dev
-	mergeDepType(m, "VULN-1", "")            // empty dep-type = unknown
+	mergeDepType(m, "VULN-1", "")           // empty dep-type = unknown
 	assert.Equal(t, "runtime", m["VULN-1"],
 		"empty dep-type must promote to runtime (unknown dep-type ≠ safe; "+
 			"must not leave advisory tagged dev when an unknown-type dep matches it)")
@@ -542,4 +542,79 @@ func TestRegisterEcosystemAdapter_PanicsOnLockfileSymbolCeiling(t *testing.T) {
 				})
 			})
 	})
+}
+
+// TestRegisterEcosystemAdapter_GraduatedAdapterValid: a graduated (HasPlugin)
+// adapter that keeps its ParseLockfile and a package ceiling is well-formed —
+// the plugin adds NOT_REACHABLE below the package tier, never SYMBOL above it,
+// so ceilingPackage is preserved and registration must not panic.
+func TestRegisterEcosystemAdapter_GraduatedAdapterValid(t *testing.T) {
+	withCleanRegistry(t, func() {
+		assert.NotPanics(t, func() {
+			RegisterEcosystemAdapter(EcosystemAdapter{
+				Ecosystem:     "NuGet",
+				Language:      "dotnet",
+				DetectFiles:   []string{"*.csproj"},
+				MaxConfidence: ceilingPackage,
+				ParseLockfile: func(_ string) ([]ResolvedDep, bool, error) { return nil, true, nil },
+				HasPlugin:     true,
+				PluginName:    "nuget",
+			})
+		})
+	})
+}
+
+// TestRegisterEcosystemAdapter_PanicsOnGraduatedWithoutParser: a graduated
+// adapter is still lockfile-backed — the host parses the lockfile as the
+// authoritative closure and hands it to the plugin via resolved_deps. A nil
+// ParseLockfile would send the plugin an empty closure, risking a false
+// NOT_REACHABLE, so registration must fail loudly.
+func TestRegisterEcosystemAdapter_PanicsOnGraduatedWithoutParser(t *testing.T) {
+	withCleanRegistry(t, func() {
+		assert.PanicsWithValue(t,
+			`RegisterEcosystemAdapter: graduated adapter "dotnet" (HasPlugin) must keep `+
+				`its ParseLockfile as the closure source the plugin consumes; a nil `+
+				`parser would send the plugin an empty closure and risk a false NOT_REACHABLE`,
+			func() {
+				RegisterEcosystemAdapter(EcosystemAdapter{
+					Ecosystem:     "NuGet",
+					Language:      "dotnet",
+					DetectFiles:   []string{"*.csproj"},
+					MaxConfidence: ceilingPackage,
+					ParseLockfile: nil, // graduated but no closure source
+					HasPlugin:     true,
+				})
+			})
+	})
+}
+
+// TestRegisterEcosystemAdapter_PanicsOnGraduatedSymbolCeiling: even a graduated
+// adapter must keep ceilingPackage — the ceilingPackage guard applies to every
+// ParseLockfile-backed adapter regardless of HasPlugin.
+func TestRegisterEcosystemAdapter_PanicsOnGraduatedSymbolCeiling(t *testing.T) {
+	withCleanRegistry(t, func() {
+		assert.PanicsWithValue(t,
+			`RegisterEcosystemAdapter: lockfile-static adapter "dotnet" must declare `+
+				`ceilingPackage; lockfile parsing cannot prove symbol-level reachability`,
+			func() {
+				RegisterEcosystemAdapter(EcosystemAdapter{
+					Ecosystem:     "NuGet",
+					Language:      "dotnet",
+					DetectFiles:   []string{"*.csproj"},
+					MaxConfidence: ceilingSymbol,
+					ParseLockfile: func(_ string) ([]ResolvedDep, bool, error) { return nil, true, nil },
+					HasPlugin:     true,
+					PluginName:    "nuget",
+				})
+			})
+	})
+}
+
+// TestEcosystemAdapter_PluginBaseName verifies the plugin base name resolution:
+// PluginName when set, else Language.
+func TestEcosystemAdapter_PluginBaseName(t *testing.T) {
+	assert.Equal(t, "pub", EcosystemAdapter{Language: "dart", PluginName: "pub"}.pluginBaseName(),
+		"PluginName must win over Language when set")
+	assert.Equal(t, "java", EcosystemAdapter{Language: "java"}.pluginBaseName(),
+		"empty PluginName must default to Language")
 }
