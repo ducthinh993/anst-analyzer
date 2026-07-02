@@ -1077,6 +1077,39 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 		incomplete = true
 	}
 
+	// Build reachability plugin manifests for graduated (HasPlugin) lockfile
+	// ecosystems that are in scope. Building here — before the lockfile finding
+	// loop — lets the loop know whether a plugin will run for each ecosystem:
+	// when it will, the direct PACKAGE_REACHABLE finding is suppressed (the
+	// plugin owns the verdict, which may be NOT_REACHABLE); when the plugin
+	// binary is absent or fails to build, the ecosystem degrades to the direct
+	// finding (fallback — never a silent skip). --skip-reachability-analysis
+	// disables every plugin, so each graduated ecosystem also falls back then.
+	lockfilePluginManifests := map[string]*host.Manifest{}
+	if !flags.skipReachabilityAnalysis {
+		for _, a := range lockfileAdapters() {
+			if !a.HasPlugin {
+				continue
+			}
+			if !eco.active(a.Language) && len(lockfileDiscovered[a.Language]) == 0 {
+				continue // not in scope anywhere in this tree
+			}
+			if m, ok := buildLockfilePluginManifest(ctx, a, ""); ok {
+				lockfilePluginManifests[a.Language] = m
+			} else {
+				fmt.Fprintf(os.Stderr,
+					"warning: %s reachability plugin unavailable; falling back to "+
+						"direct lockfile package-reachable findings for %s\n",
+					a.Language, a.Ecosystem)
+			}
+		}
+	}
+
+	// Accumulators for the host's parsed closure handed to graduated plugins via
+	// AnalyzeRequest.resolved_deps / closure_incomplete (see step 6).
+	var lockfileResolvedDeps []*commit0v1.ResolvedDependency
+	lockfileClosureIncomplete := false
+
 	var lockfileFindings []*commit0v1.Finding
 	for _, lockfileAdapter := range lockfileAdapters() {
 		// Determine which directories to scan for this adapter.
@@ -1145,6 +1178,21 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 		// Dedup aggregated deps by normalised name@version before querying OSV.
 		// "runtime" wins when the same dep has different DepTypes across sub-projects.
 		deps := dedupLockfileDeps(aggDeps, lockfileAdapter.NormalizeName)
+
+		// Decide whether to defer this ecosystem's finding to a reachability
+		// plugin. When a plugin will run for it, suppress the direct finding and
+		// hand the plugin the parsed closure via resolved_deps so it never
+		// re-parses the lockfile; a partial closure sets closure_incomplete, which
+		// forbids the plugin from emitting NOT_REACHABLE ("unknown ≠ safe").
+		pluginWillRun := lockfilePluginManifests[lockfileAdapter.Language] != nil
+		suppressDirect := suppressDirectLockfileFinding(lockfileAdapter, pluginWillRun)
+		if suppressDirect {
+			lockfileResolvedDeps = append(lockfileResolvedDeps,
+				resolvedDepsForAdapter(lockfileAdapter, deps)...)
+			if !aggComplete {
+				lockfileClosureIncomplete = true
+			}
+		}
 
 		// Query OSV advisories for the resolved closure (full when complete=true,
 		// declared/direct-only when this is a partial closure that fell through above).
@@ -1243,21 +1291,17 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 					// Undecidable matches become CONFIDENCE_UNKNOWN + Incomplete=true so
 					// the policy gate correctly exits 3 rather than silently passing clean.
 					PerAdvisory: func(dep advisoryDep, adv *advisory.Advisory) {
-						lockfileConf := ceilingToConfidence(lockfileAdapter.MaxConfidence)
-						if adv.Incomplete {
-							lockfileConf = commit0v1.Confidence_CONFIDENCE_UNKNOWN
+						// For a graduated ecosystem whose plugin will run, suppress the
+						// direct finding: the plugin owns the verdict (possibly
+						// NOT_REACHABLE). The advisory still reaches the plugin via
+						// ProtoAdvs above and the closure via resolved_deps, so coverage
+						// is never lost. When no plugin runs, this emits the same
+						// PACKAGE_REACHABLE (or UNKNOWN) finding as before graduation.
+						if suppressDirect {
+							return
 						}
-						lockfileFindings = append(lockfileFindings, &commit0v1.Finding{
-							Advisory: &commit0v1.AdvisoryRef{
-								Id:      adv.ID,
-								Aliases: append([]string(nil), adv.Aliases...),
-							},
-							Module:     dep.Module,
-							Confidence: lockfileConf,
-							Incomplete: adv.Incomplete,
-							Pillar:     "sca",
-							Language:   lockfileAdapter.Language,
-						})
+						lockfileFindings = append(lockfileFindings,
+							newDirectLockfileFinding(lockfileAdapter, dep, adv))
 					},
 				}, lockfileResolveDeps)
 			}
@@ -1310,6 +1354,12 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 	if flags.tags != "" {
 		req.BuildConfig.Tags = strings.Split(flags.tags, ",")
 	}
+	// Hand graduated lockfile plugins the host's already-parsed closure so they
+	// consume it instead of re-parsing the lockfile. closure_incomplete forbids
+	// any plugin from emitting NOT_REACHABLE over a partial closure. Older plugins
+	// ignore both fields (additive minor-2 contract).
+	req.ResolvedDeps = lockfileResolvedDeps
+	req.ClosureIncomplete = lockfileClosureIncomplete
 
 	// ── 7. Locate / build plugins and register ────────────────────────────────
 	//
@@ -1395,6 +1445,18 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 			if addErr := reg.Add(pythonManifest); addErr != nil {
 				fmt.Fprintf(os.Stderr, "commit0-analyzer scan: register python plugin: %v\n", addErr)
 				return policy.ExitOperationalError
+			}
+		}
+
+		// Register graduated lockfile reachability plugins (built before the
+		// lockfile loop). Iterate orderedLanguages for deterministic registration
+		// order. Empty when --skip-reachability-analysis or no ecosystem graduated.
+		for _, lang := range orderedLanguages {
+			if m := lockfilePluginManifests[lang]; m != nil {
+				if addErr := reg.Add(m); addErr != nil {
+					fmt.Fprintf(os.Stderr, "commit0-analyzer scan: register %s plugin: %v\n", lang, addErr)
+					return policy.ExitOperationalError
+				}
 			}
 		}
 

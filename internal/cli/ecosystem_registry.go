@@ -125,6 +125,38 @@ type EcosystemAdapter struct {
 	// are case-insensitive; a future PyPI adapter would set NormalizeName to
 	// strings.ToLower (or a PEP-503-compliant normalizer).
 	NormalizeName func(name string) string
+
+	// HasPlugin marks a lockfile-static adapter that has graduated to a
+	// reachability plugin. A graduated adapter KEEPS its ParseLockfile (the host
+	// still parses the lockfile as the authoritative closure source and passes it
+	// to the plugin via AnalyzeRequest.resolved_deps); the plugin adds the ONE
+	// new capability lockfile parsing cannot: package-level NOT_REACHABLE (the
+	// advisory package is present in the closure but provably never referenced in
+	// project source, with no dynamism frontier). MaxConfidence STAYS
+	// ceilingPackage — the plugin proves reachability BELOW the package tier
+	// (NOT_REACHABLE), never SYMBOL_REACHABLE above it (no advisory here carries
+	// symbol data). When the plugin binary is absent or fails to build, the host
+	// degrades to the direct lockfile PACKAGE_REACHABLE path (never a silent skip).
+	HasPlugin bool
+
+	// PluginName is the base name of the graduated adapter's reachability plugin:
+	// the plugin lives at plugins/<PluginName>-reachability/, builds to the binary
+	// commit0-<PluginName>-reachability, and registers under the manifest name
+	// <PluginName>-reachability. It is distinct from Language because a plugin is
+	// named for its registry/ecosystem (e.g. "pub", "maven") while Language is the
+	// --language taxonomy value (e.g. "dart", "java"). Only consulted when
+	// HasPlugin is true; when empty it defaults to Language.
+	PluginName string
+}
+
+// pluginBaseName returns the plugin directory/binary base name for a graduated
+// adapter: PluginName when set, otherwise Language. Callers must only invoke it
+// on HasPlugin adapters.
+func (a EcosystemAdapter) pluginBaseName() string {
+	if a.PluginName != "" {
+		return a.PluginName
+	}
+	return a.Language
 }
 
 // ecosystems is the set of ecosystems in scope for a scan, keyed by --language
@@ -219,7 +251,12 @@ var ecosystemRegistry = []EcosystemAdapter{
 //     using it could scan nothing and still exit 0 — a silent false-clean.
 //   - A lockfile-static adapter (ParseLockfile != nil) claiming a symbol
 //     ceiling would stamp SYMBOL_REACHABLE on findings without any call-graph
-//     proof; lockfile parsing can only ever establish package presence.
+//     proof; lockfile parsing can only ever establish package presence. This
+//     holds whether or not the adapter has graduated to a plugin: a graduated
+//     plugin adds NOT_REACHABLE *below* the package tier, never SYMBOL above it.
+//   - A graduated adapter (HasPlugin) with a nil ParseLockfile has no closure
+//     source to hand the plugin — the host would send an empty resolved_deps and
+//     the plugin could emit a false NOT_REACHABLE over a closure it never saw.
 func RegisterEcosystemAdapter(a EcosystemAdapter) {
 	if !isKnownLanguage(a.Language) {
 		panic(fmt.Sprintf(
@@ -232,6 +269,13 @@ func RegisterEcosystemAdapter(a EcosystemAdapter) {
 		panic(fmt.Sprintf(
 			"RegisterEcosystemAdapter: lockfile-static adapter %q must declare "+
 				"ceilingPackage; lockfile parsing cannot prove symbol-level reachability",
+			a.Language))
+	}
+	if a.HasPlugin && a.ParseLockfile == nil {
+		panic(fmt.Sprintf(
+			"RegisterEcosystemAdapter: graduated adapter %q (HasPlugin) must keep "+
+				"its ParseLockfile as the closure source the plugin consumes; a nil "+
+				"parser would send the plugin an empty closure and risk a false NOT_REACHABLE",
 			a.Language))
 	}
 	ecosystemRegistry = append(ecosystemRegistry, a)

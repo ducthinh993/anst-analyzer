@@ -57,3 +57,28 @@ func TestCompatible_RejectsHigherMinor(t *testing.T) {
 	assert.False(t, contract.Compatible(contract.ProtocolMajor, higherMinor),
 		"plugin with higher minor than host must be rejected")
 }
+
+// TestCompatible_Minor2Contract pins the resolved_deps minor bump (1→2). The
+// host is now at minor 2; it must accept a plugin advertising minor 2 (a
+// lockfile-backed plugin that consumes resolved_deps) and reject minor 3.
+func TestCompatible_Minor2Contract(t *testing.T) {
+	assert.Equal(t, 2, contract.ProtocolMinor,
+		"resolved_deps is an additive minor bump; ProtocolMinor must be 2")
+	assert.Equal(t, "0.2", contract.ProtocolVersion,
+		"ProtocolVersion must track the minor bump")
+
+	assert.True(t, contract.Compatible(0, 2),
+		"a plugin at minor 2 (advertises resolved_deps support) must be accepted by host 2")
+	assert.False(t, contract.Compatible(0, 3),
+		"a plugin at minor 3 requires fields host 2 does not send; must be rejected")
+}
+
+// TestCompatible_OlderMinorStillLoads is the backward-compatibility guarantee:
+// existing plugins that predate the resolved_deps field advertise minor 1 (or
+// 0) and must continue to load against host 2. The bump is purely additive.
+func TestCompatible_OlderMinorStillLoads(t *testing.T) {
+	assert.True(t, contract.Compatible(0, 1),
+		"a pre-resolved_deps plugin at minor 1 must still load (additive bump)")
+	assert.True(t, contract.Compatible(0, 0),
+		"a plugin at minor 0 must still load against host 2")
+}

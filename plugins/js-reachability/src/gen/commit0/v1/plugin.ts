@@ -472,6 +472,31 @@ export interface EcosystemBuildConfig_ExtraEnvEntry {
 }
 
 /**
+ * ResolvedDependency is one entry in the host's already-parsed dependency
+ * closure for a lockfile-static ecosystem. The host resolves the closure from
+ * the project's lockfile and passes it to the reachability plugin so the plugin
+ * consumes the closure directly and never re-parses the lockfile in its own
+ * language (DRY + smaller ACE surface: seven parsers already exist host-side).
+ *
+ * This message is optional and additive: plugins that predate it ignore the
+ * resolved_deps field entirely (they resolve their own closure). New
+ * lockfile-backed plugins advertise protocol minor >= 2 and consume it.
+ */
+export interface ResolvedDependency {
+  /** name is the ecosystem-specific package name (e.g. "org.springframework:spring-core"). */
+  name: string;
+  /** version is the resolved version string from the lockfile. */
+  version: string;
+  /**
+   * dep_type is the dependency classification from the lockfile:
+   * "runtime", "dev", "test", "optional", or "" (unknown, treated as runtime).
+   */
+  depType: string;
+  /** ecosystem identifies which ecosystem this dependency belongs to. */
+  ecosystem: Ecosystem;
+}
+
+/**
  * AnalyzeRequest is the single input type for the Analyze RPC.
  * Used by both the plugin host (Phase 2) and the standalone runner (Phase 4);
  * there is exactly one request type — no divergent advisory plumbing.
@@ -496,7 +521,24 @@ export interface AnalyzeRequest {
    * Optional and additive: Go/JS plugins ignore this field. New language plugins
    * (Rust, Python) use this instead of overloading the Go-specific build_config.
    */
-  ecosystemBuildConfig?: EcosystemBuildConfig | undefined;
+  ecosystemBuildConfig?:
+    | EcosystemBuildConfig
+    | undefined;
+  /**
+   * resolved_deps is the host's already-parsed dependency closure for
+   * lockfile-static ecosystems. A lockfile-backed reachability plugin consumes
+   * this closure instead of re-parsing the lockfile. Optional and additive:
+   * older plugins ignore it and resolve their own closure.
+   */
+  resolvedDeps: ResolvedDependency[];
+  /**
+   * closure_incomplete is true when any host-side adapter returned a partial
+   * closure (complete=false). When true, a plugin MUST NOT emit NOT_REACHABLE:
+   * a package that appears unreferenced could still be pulled in by an
+   * unresolved transitive dependency. This is the wire-level guard against a
+   * false NOT_REACHABLE proven over an incomplete closure ("unknown ≠ safe").
+   */
+  closureIncomplete: boolean;
 }
 
 /** MetadataRequest is sent by the host to identify itself during the handshake. */
@@ -1739,8 +1781,128 @@ export const EcosystemBuildConfig_ExtraEnvEntry: MessageFns<EcosystemBuildConfig
   },
 };
 
+function createBaseResolvedDependency(): ResolvedDependency {
+  return { name: "", version: "", depType: "", ecosystem: 0 };
+}
+
+export const ResolvedDependency: MessageFns<ResolvedDependency> = {
+  encode(message: ResolvedDependency, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.name !== "") {
+      writer.uint32(10).string(message.name);
+    }
+    if (message.version !== "") {
+      writer.uint32(18).string(message.version);
+    }
+    if (message.depType !== "") {
+      writer.uint32(26).string(message.depType);
+    }
+    if (message.ecosystem !== 0) {
+      writer.uint32(32).int32(message.ecosystem);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): ResolvedDependency {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseResolvedDependency();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.name = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.version = reader.string();
+          continue;
+        }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.depType = reader.string();
+          continue;
+        }
+        case 4: {
+          if (tag !== 32) {
+            break;
+          }
+
+          message.ecosystem = reader.int32() as any;
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): ResolvedDependency {
+    return {
+      name: isSet(object.name) ? globalThis.String(object.name) : "",
+      version: isSet(object.version) ? globalThis.String(object.version) : "",
+      depType: isSet(object.depType)
+        ? globalThis.String(object.depType)
+        : isSet(object.dep_type)
+        ? globalThis.String(object.dep_type)
+        : "",
+      ecosystem: isSet(object.ecosystem) ? ecosystemFromJSON(object.ecosystem) : 0,
+    };
+  },
+
+  toJSON(message: ResolvedDependency): unknown {
+    const obj: any = {};
+    if (message.name !== "") {
+      obj.name = message.name;
+    }
+    if (message.version !== "") {
+      obj.version = message.version;
+    }
+    if (message.depType !== "") {
+      obj.depType = message.depType;
+    }
+    if (message.ecosystem !== 0) {
+      obj.ecosystem = ecosystemToJSON(message.ecosystem);
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<ResolvedDependency>, I>>(base?: I): ResolvedDependency {
+    return ResolvedDependency.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<ResolvedDependency>, I>>(object: I): ResolvedDependency {
+    const message = createBaseResolvedDependency();
+    message.name = object.name ?? "";
+    message.version = object.version ?? "";
+    message.depType = object.depType ?? "";
+    message.ecosystem = object.ecosystem ?? 0;
+    return message;
+  },
+};
+
 function createBaseAnalyzeRequest(): AnalyzeRequest {
-  return { moduleRoot: "", entrypoints: [], buildConfig: undefined, advisories: [], ecosystemBuildConfig: undefined };
+  return {
+    moduleRoot: "",
+    entrypoints: [],
+    buildConfig: undefined,
+    advisories: [],
+    ecosystemBuildConfig: undefined,
+    resolvedDeps: [],
+    closureIncomplete: false,
+  };
 }
 
 export const AnalyzeRequest: MessageFns<AnalyzeRequest> = {
@@ -1759,6 +1921,12 @@ export const AnalyzeRequest: MessageFns<AnalyzeRequest> = {
     }
     if (message.ecosystemBuildConfig !== undefined) {
       EcosystemBuildConfig.encode(message.ecosystemBuildConfig, writer.uint32(42).fork()).join();
+    }
+    for (const v of message.resolvedDeps) {
+      ResolvedDependency.encode(v!, writer.uint32(50).fork()).join();
+    }
+    if (message.closureIncomplete !== false) {
+      writer.uint32(56).bool(message.closureIncomplete);
     }
     return writer;
   },
@@ -1810,6 +1978,22 @@ export const AnalyzeRequest: MessageFns<AnalyzeRequest> = {
           message.ecosystemBuildConfig = EcosystemBuildConfig.decode(reader, reader.uint32());
           continue;
         }
+        case 6: {
+          if (tag !== 50) {
+            break;
+          }
+
+          message.resolvedDeps.push(ResolvedDependency.decode(reader, reader.uint32()));
+          continue;
+        }
+        case 7: {
+          if (tag !== 56) {
+            break;
+          }
+
+          message.closureIncomplete = reader.bool();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1842,6 +2026,16 @@ export const AnalyzeRequest: MessageFns<AnalyzeRequest> = {
         : isSet(object.ecosystem_build_config)
         ? EcosystemBuildConfig.fromJSON(object.ecosystem_build_config)
         : undefined,
+      resolvedDeps: globalThis.Array.isArray(object?.resolvedDeps)
+        ? object.resolvedDeps.map((e: any) => ResolvedDependency.fromJSON(e))
+        : globalThis.Array.isArray(object?.resolved_deps)
+        ? object.resolved_deps.map((e: any) => ResolvedDependency.fromJSON(e))
+        : [],
+      closureIncomplete: isSet(object.closureIncomplete)
+        ? globalThis.Boolean(object.closureIncomplete)
+        : isSet(object.closure_incomplete)
+        ? globalThis.Boolean(object.closure_incomplete)
+        : false,
     };
   },
 
@@ -1862,6 +2056,12 @@ export const AnalyzeRequest: MessageFns<AnalyzeRequest> = {
     if (message.ecosystemBuildConfig !== undefined) {
       obj.ecosystemBuildConfig = EcosystemBuildConfig.toJSON(message.ecosystemBuildConfig);
     }
+    if (message.resolvedDeps?.length) {
+      obj.resolvedDeps = message.resolvedDeps.map((e) => ResolvedDependency.toJSON(e));
+    }
+    if (message.closureIncomplete !== false) {
+      obj.closureIncomplete = message.closureIncomplete;
+    }
     return obj;
   },
 
@@ -1879,6 +2079,8 @@ export const AnalyzeRequest: MessageFns<AnalyzeRequest> = {
     message.ecosystemBuildConfig = (object.ecosystemBuildConfig !== undefined && object.ecosystemBuildConfig !== null)
       ? EcosystemBuildConfig.fromPartial(object.ecosystemBuildConfig)
       : undefined;
+    message.resolvedDeps = object.resolvedDeps?.map((e) => ResolvedDependency.fromPartial(e)) || [];
+    message.closureIncomplete = object.closureIncomplete ?? false;
     return message;
   },
 };
