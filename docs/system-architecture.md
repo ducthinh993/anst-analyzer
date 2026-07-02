@@ -8,47 +8,91 @@ file map, see [`docs/codebase-summary.md`](./codebase-summary.md).
 
 ## Scan pipeline
 
+One pipeline, one advisory engine; the only per-ecosystem fork is *how the
+dependency closure is resolved* and *how deep reachability can be proven*.
+
 ```mermaid
 flowchart TD
-    A[CLI: scan path] --> B[Detect ecosystems]
-    B --> C{Lane A or Lane B?}
-    C -->|"Lane A: Maven, NuGet,\nPackagist, RubyGems,\nHex, Pub, Swift"| D[Adapter: ParseLockfile]
-    C -->|"Lane B: Go, JS/TS,\nRust, Python"| E[Auto dependency install\nscripts disabled]
-    D --> F[Resolve advisories: OSV]
-    E --> G[Resolve advisories:\nmulti-source + enrichment]
-    F --> H[Findings at PACKAGE_REACHABLE\nmax confidence]
-    G --> I[Plugin host: Analyze]
-    I --> J[Confidence tiers\nSYMBOL / PACKAGE / NOT / UNKNOWN]
-    H --> K[Merge findings]
-    J --> K
-    K --> L[Stamp severity, risk score,\nprovenance]
-    L --> M[Render: SARIF / JSON / table]
-    L --> N[VEX: OpenVEX / CycloneDX / CSAF]
-    M --> O[Policy gate]
-    N --> O
-    O --> P{Exit code}
-    P -->|"0: clean"| Q0[Exit 0]
-    P -->|"1: gate failure"| Q1[Exit 1]
-    P -->|"3: incomplete"| Q3[Exit 3]
+    A[CLI: scan path] --> B[Detect ecosystems\nregistry-driven]
+    B --> C[Resolve dependency closure]
+    C -->|"lockfile-static:\nMaven, NuGet, Packagist,\nRubyGems, Hex, Pub, SwiftPM"| C1[Parse lockfile statically\nno build tool executed]
+    C -->|"tool/plugin-backed:\nGo, JS/TS, Rust, Python"| C2[Auto dependency install\nlifecycle scripts disabled]
+    C1 --> D[Resolve advisories\nshared engine: multi-source + enrichment\nALL ecosystems]
+    C2 --> D
+    D --> E{Reachability stage}
+    E -->|"ecosystem has a plugin"| F[Plugin host: Analyze\nSYMBOL / PACKAGE / NOT / UNKNOWN]
+    E -->|"no plugin"| G[Emit at package-level ceiling\nPACKAGE_REACHABLE or UNKNOWN]
+    F --> H[Merge findings]
+    G --> H
+    H --> I[Stamp severity, risk score,\nprovenance]
+    I --> J[Render: SARIF / JSON / table]
+    I --> K[VEX: OpenVEX / CycloneDX / CSAF]
+    J --> L[Policy gate]
+    K --> L
+    L --> M{Exit code}
+    M -->|"0: clean"| N0[Exit 0]
+    M -->|"1: gate failure"| N1[Exit 1]
+    M -->|"3: incomplete"| N3[Exit 3]
 ```
 
-**Lane A** (lockfile-static, no plugin process): Maven, NuGet, Packagist,
-RubyGems, Hex, Pub, SwiftPM. Each ecosystem's `LaneAAdapter` parses only the
-lockfile (`gradle.lockfile`, `packages.lock.json`, `composer.lock`,
-`Gemfile.lock`, `mix.lock`/`rebar.lock`, `pubspec.lock`,
-`Package.resolved`) — manifests are read for direct-dependency hints only and
-are never executed. Reachability tops out at `PACKAGE_REACHABLE`; a
-declared-only manifest without a lockfile is always incomplete.
+**Detection is registry-driven.** Every supported ecosystem is one
+`EcosystemAdapter` entry in `internal/cli/ecosystem_registry.go` carrying its
+detection files, its `--language` value, and a `MaxConfidence` ceiling. Adding a
+lockfile-static ecosystem is one registry entry plus a version comparator — no
+per-language `switch` to edit.
 
-**Lane B** (plugin-backed): Go, JavaScript/TypeScript, Rust, Python. The host
-auto-installs dependencies (lifecycle/build scripts always disabled) unless
-`--skip-deps-install` or `--offline`, then dispatches to a reachability
-plugin over gRPC. All four tiers are reachable, up to `SYMBOL_REACHABLE` for
-Go and Python (and JS/TS with `--symbols`).
+**Two resolver kinds, one advisory engine.** The registry entry decides how the
+dependency closure is obtained:
 
-Both lanes feed the same downstream pipeline: merge → severity/risk stamping
-→ render → VEX → policy gate → exit code. Full flag semantics for each stage
-are in [`docs/usage.md`](./usage.md).
+- **Lockfile-static** (`ParseLockfile` is set): the host parses the lockfile
+  (`gradle.lockfile`, `packages.lock.json`, `composer.lock`, `Gemfile.lock`,
+  `mix.lock`/`rebar.lock`, `pubspec.lock`, `Package.resolved`) with no build tool
+  executed — manifests are read for direct-dependency hints only. A declared-only
+  manifest without a lockfile is always incomplete.
+- **Tool/plugin-backed** (`ParseLockfile` is nil): the host auto-installs
+  dependencies (lifecycle/build scripts always disabled) unless
+  `--skip-deps-install` or `--offline`, then a reachability plugin resolves the
+  closure over gRPC.
+
+Both kinds then feed the **same** advisory resolution
+(`internal/cli/advisory_resolution.go`, `resolveDepAdvisories`): every ecosystem
+runs the identical multi-source fetch **and** full enrichment chain. There is no
+"OSV-only" fast path — OSV happens to be the source with coverage for the
+lockfile-static ecosystems, but they run through the same `MultiSource` +
+enrichment pipeline as the plugin ecosystems.
+
+**The reachability stage is where depth diverges.** An ecosystem with a plugin
+gets call-graph analysis (up to `SYMBOL_REACHABLE`). An ecosystem without one has
+its advisory matches emitted directly at its package-level ceiling
+(`PACKAGE_REACHABLE`, or `UNKNOWN` when the version comparison is undecidable so
+that `unknown ≠ safe` holds). All findings then merge into one stream.
+
+### Per-ecosystem capability
+
+| Ecosystem | Resolver kind | `MaxConfidence` ceiling | Graduation condition |
+|---|---|---|---|
+| Go | tool/plugin-backed | `SYMBOL_REACHABLE` | — |
+| JavaScript/TypeScript | tool/plugin-backed | `SYMBOL_REACHABLE` (symbol paths behind `--symbols`) | — |
+| Rust | tool/plugin-backed | `SYMBOL_REACHABLE` | — |
+| Python | tool/plugin-backed | `SYMBOL_REACHABLE` | — |
+| Maven (JVM) | lockfile-static | `PACKAGE_REACHABLE` | symbol-level advisory data + a plugin |
+| NuGet (.NET) | lockfile-static | `PACKAGE_REACHABLE` | symbol-level advisory data + a plugin |
+| Packagist (PHP) | lockfile-static | `PACKAGE_REACHABLE` | symbol-level advisory data + a plugin |
+| RubyGems (Ruby) | lockfile-static | `PACKAGE_REACHABLE` | symbol-level advisory data + a plugin |
+| Hex (Elixir/Erlang) | lockfile-static | `PACKAGE_REACHABLE` | symbol-level advisory data + a plugin |
+| Pub (Dart) | lockfile-static | `PACKAGE_REACHABLE` | symbol-level advisory data + a plugin |
+| SwiftPM (Swift) | lockfile-static | `PACKAGE_REACHABLE` | symbol-level advisory data + a plugin |
+
+**Graduation rule (stated once).** A lockfile-static ecosystem earns a
+symbol-level ceiling if and only if its advisory sources begin carrying
+symbol-level (vulnerable-function) data. Promoting it is then a per-ecosystem
+change — raise its `MaxConfidence` in the registry and add a reachability plugin
+— not an architectural migration. Ecosystem membership is a capability
+declaration in the registry, not a structural fork in the pipeline.
+
+Both resolver kinds share the same downstream pipeline: merge → severity/risk
+stamping → render → VEX → policy gate → exit code. Full flag semantics for each
+stage are in [`docs/usage.md`](./usage.md).
 
 ## Plugin host & trust boundary
 

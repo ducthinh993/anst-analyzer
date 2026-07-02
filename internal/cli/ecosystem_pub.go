@@ -1,6 +1,6 @@
 package cli
 
-// ecosystem_pub.go — Lane-A lockfile-static adapter for Pub (Dart/Flutter).
+// ecosystem_pub.go — lockfile-static adapter for Pub (Dart/Flutter).
 //
 // OSV ecosystem: "Pub" (https://osv.dev/list?ecosystem=Pub)
 // Maximum confidence: PACKAGE_REACHABLE (Pub OSV advisories carry no method-level data).

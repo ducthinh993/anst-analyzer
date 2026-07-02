@@ -238,7 +238,7 @@ The Swift analyzer resolves dependencies from the `Package.resolved` lockfile. E
 - Rust: `Cargo.toml` in subdirectories may not be detected.
 - Python: `pyproject.toml` or `requirements.txt` in subdirectories may not be detected.
 
-**Lane-A ecosystems (Maven, NuGet, Packagist, RubyGems, Hex, Pub, Swift)** now discover and scan manifests in subdirectories via bounded depth-limited walk:
+**Lockfile-static ecosystems (Maven, NuGet, Packagist, RubyGems, Hex, Pub, Swift)** now discover and scan manifests in subdirectories via bounded depth-limited walk:
 - JVM: Multiple `pom.xml` or `gradle.lockfile` files in subdirectories are now detected.
 - .NET: Multiple `.csproj` files in subdirectories of a shared solution are now detected.
 - PHP: Multiple `composer.lock` files in subdirectories are now detected.

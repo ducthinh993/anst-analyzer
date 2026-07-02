@@ -1,6 +1,6 @@
 package cli
 
-// ecosystem_packagist.go — Lane-A lockfile-static adapter for Packagist (PHP/Composer).
+// ecosystem_packagist.go — lockfile-static adapter for Packagist (PHP/Composer).
 //
 // OSV ecosystem: "Packagist" (https://osv.dev/list?ecosystem=Packagist)
 // Maximum confidence: PACKAGE_REACHABLE (Packagist OSV advisories carry no method-level data).

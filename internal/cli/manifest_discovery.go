@@ -1,6 +1,6 @@
 package cli
 
-// manifest_discovery.go — bounded directory walk to locate Lane-A manifest files
+// manifest_discovery.go — bounded directory walk to locate lockfile-static manifest files
 // in multi-project (subdirectory) layouts.
 //
 // Design contract:
@@ -84,7 +84,7 @@ func dirMatchesAdapter(dir string, a EcosystemAdapter) bool {
 }
 
 // ensureRootFirst returns dirs with moduleRoot prepended if it is not already
-// present. Used by the Lane-A scan loop to ensure the root directory is always
+// present. Used by the lockfile-static scan loop to ensure the root directory is always
 // scanned when an adapter is active via root detection or an explicit --language
 // flag, even if discovery did not find a manifest there.
 func ensureRootFirst(dirs []string, moduleRoot string) []string {
@@ -99,7 +99,7 @@ func ensureRootFirst(dirs []string, moduleRoot string) []string {
 	return out
 }
 
-// dedupLaneADeps deduplicates a slice of ResolvedDep by normalised name@version,
+// dedupLockfileDeps deduplicates a slice of ResolvedDep by normalised name@version,
 // preserving first-seen order. When the same package appears in multiple
 // sub-projects with different DepTypes, the result carries the most conservative
 // type: "runtime" beats any other value (matching mergeDepType semantics so that
@@ -107,7 +107,7 @@ func ensureRootFirst(dirs []string, moduleRoot string) []string {
 // to "dev" by another sub-project's annotation).
 //
 // normalize may be nil, in which case dep.Name is used as-is.
-func dedupLaneADeps(deps []ResolvedDep, normalize func(string) string) []ResolvedDep {
+func dedupLockfileDeps(deps []ResolvedDep, normalize func(string) string) []ResolvedDep {
 	type key struct{ name, version string }
 	type entry struct {
 		dep     ResolvedDep
@@ -152,8 +152,8 @@ func dedupLaneADeps(deps []ResolvedDep, normalize func(string) string) []Resolve
 	return out
 }
 
-// discoverLaneAProjectDirs walks moduleRoot (up to discoveryMaxDepth levels deep)
-// and returns, for each Lane-A adapter Language, the set of directories that
+// discoverLockfileProjectDirs walks moduleRoot (up to discoveryMaxDepth levels deep)
+// and returns, for each lockfile-static adapter Language, the set of directories that
 // contain at least one of that adapter's DetectFiles.
 //
 // Walk properties:
@@ -165,7 +165,7 @@ func dedupLaneADeps(deps []ResolvedDep, normalize func(string) string) []Resolve
 //     adapters. If the cap is reached the walk terminates with capped=true.
 //
 // Callers MUST set incomplete=true when capped=true.
-func discoverLaneAProjectDirs(moduleRoot string, adapters []EcosystemAdapter) (dirs map[string][]string, capped bool) {
+func discoverLockfileProjectDirs(moduleRoot string, adapters []EcosystemAdapter) (dirs map[string][]string, capped bool) {
 	dirs = make(map[string][]string)
 	if len(adapters) == 0 {
 		return

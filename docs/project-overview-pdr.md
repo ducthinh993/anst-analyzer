@@ -92,7 +92,7 @@ produce is a false `NOT_REACHABLE` or a false-clean exit `0`.
 - **Trust boundary for plugins.** Reachability plugins are loaded only from an
   explicit allowlist with SHA-256 artifact pinning (no PATH/conventional-path
   discovery). See [`docs/system-architecture.md`](./system-architecture.md).
-- **ACE safety.** Neither the host nor any Lane-A ecosystem adapter ever
+- **ACE safety.** Neither the host nor any lockfile-static ecosystem adapter ever
   executes a project's manifest, build script, or install hook to determine
   reachability; where dependency installation runs, lifecycle scripts are
   always disabled.
@@ -115,7 +115,7 @@ produce is a false `NOT_REACHABLE` or a false-clean exit `0`.
 - **Out of scope ecosystems.** C/C++ (no manifest-based dependency model to
   anchor on) is explicitly out of scope; see
   [`docs/project-roadmap.md`](./project-roadmap.md) for other deferred
-  ecosystem work (Java/JVM Lane-B reachability, Rust symbol-level analysis,
+  ecosystem work (Java/JVM call-graph reachability, Rust symbol-level analysis,
   Swift advisory-source decision).
 
 ## Success Criteria

@@ -13,7 +13,7 @@ import (
 
 // ── adapter registration ──────────────────────────────────────────────────────
 
-// TestPackagistAdapterRegistered verifies that the Packagist Lane-A adapter is
+// TestPackagistAdapterRegistered verifies that the Packagist lockfile-static adapter is
 // registered in the global registry with the expected metadata.
 func TestPackagistAdapterRegistered(t *testing.T) {
 	var found *EcosystemAdapter

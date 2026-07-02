@@ -1,6 +1,6 @@
 package cli
 
-// ecosystem_rubygems.go — Lane-A lockfile-static adapter for RubyGems (Ruby/Bundler).
+// ecosystem_rubygems.go — lockfile-static adapter for RubyGems (Ruby/Bundler).
 //
 // OSV ecosystem: "RubyGems" (https://osv.dev/list?ecosystem=RubyGems)
 // Maximum confidence: PACKAGE_REACHABLE (RubyGems OSV advisories carry no method-level data).

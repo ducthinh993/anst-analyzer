@@ -431,7 +431,7 @@ func TestWarnUnsupportedEcosystems_JSOnly(t *testing.T) {
 
 // ── hasPartialityMarker (wire-level incomplete signal) ────────────────────────
 //
-// These tests verify the lane-agnostic wire contract for plugin-signalled
+// These tests verify the ecosystem-agnostic wire contract for plugin-signalled
 // partiality. A plugin that detects its own analysis gap (partial resolve,
 // no-venv, missing environment, dynamic dispatch, etc.) MUST emit a Finding
 // with Confidence=UNKNOWN and Properties["synthetic"]="true". The host reads

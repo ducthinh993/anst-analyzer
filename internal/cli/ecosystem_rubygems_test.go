@@ -14,7 +14,7 @@ import (
 
 // ── adapter registration ──────────────────────────────────────────────────────
 
-// TestRubyGemsAdapterRegistered verifies that the RubyGems Lane-A adapter is
+// TestRubyGemsAdapterRegistered verifies that the RubyGems lockfile-static adapter is
 // registered in the global registry with the expected metadata.
 func TestRubyGemsAdapterRegistered(t *testing.T) {
 	var found *EcosystemAdapter

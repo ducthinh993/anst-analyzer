@@ -13,7 +13,7 @@ import (
 
 // ── adapter registration ──────────────────────────────────────────────────────
 
-// TestNugetAdapterRegistered verifies that the NuGet Lane-A adapter is
+// TestNugetAdapterRegistered verifies that the NuGet lockfile-static adapter is
 // registered in the global registry with the expected metadata.
 func TestNugetAdapterRegistered(t *testing.T) {
 	var found *EcosystemAdapter

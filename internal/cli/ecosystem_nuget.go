@@ -1,6 +1,6 @@
 package cli
 
-// ecosystem_nuget.go — Lane-A lockfile-static adapter for NuGet (.NET/C#).
+// ecosystem_nuget.go — lockfile-static adapter for NuGet (.NET/C#).
 //
 // OSV ecosystem: "NuGet" (https://osv.dev/list?ecosystem=NuGet)
 // Maximum confidence: PACKAGE_REACHABLE (NuGet OSV advisories carry no method-level data).

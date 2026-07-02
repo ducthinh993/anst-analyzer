@@ -1,6 +1,6 @@
 package cli
 
-// ecosystem_swift.go — Lane-A lockfile-static adapter for SwiftURL (Swift Package Manager).
+// ecosystem_swift.go — lockfile-static adapter for SwiftURL (Swift Package Manager).
 //
 // OSV ecosystem: "SwiftURL" (https://osv.dev/list?ecosystem=SwiftURL)
 // Maximum confidence: PACKAGE_REACHABLE (SwiftURL OSV advisories carry no method-level data).

@@ -1,6 +1,6 @@
 package cli
 
-// ecosystem_hex.go — Lane-A lockfile-static adapter for Hex (Elixir/Erlang).
+// ecosystem_hex.go — lockfile-static adapter for Hex (Elixir/Erlang).
 //
 // OSV ecosystem: "Hex" (https://osv.dev/list?ecosystem=Hex)
 // Maximum confidence: PACKAGE_REACHABLE (Hex OSV advisories carry no method-level data).

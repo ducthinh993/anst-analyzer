@@ -36,7 +36,7 @@ Scans a project for reachable dependency vulnerabilities. The path defaults to t
 2. **Install dependencies** with lifecycle/build scripts disabled (default; opt out with `--skip-deps-install`, skipped under `--offline` — see below).
 3. Resolve dependencies per ecosystem (Go: `go list -m -json all`; JS/Rust/Python: parse lockfile; JVM/NuGet/Composer: parse lockfile or manifest).
 4. Fetch advisories from enabled sources (Go vuln DB, OSV.dev for npm/Rust/Python/Maven/NuGet/Packagist).
-5. **Run reachability analysis** (default; the deepest-security default). Drive the appropriate analyzers: plugins (Go/JS/Rust/Python) via subprocess gRPC, or Lane-A lockfile resolvers (JVM/NuGet/Composer) host-side. With `--skip-reachability-analysis` the call-graph step is skipped and package-level advisory matches are reported at `UNKNOWN` confidence instead.
+5. **Run reachability analysis** (default; the deepest-security default). Drive the appropriate analyzers: plugins (Go/JS/Rust/Python) via subprocess gRPC, or lockfile-static resolvers (JVM/NuGet/Composer) host-side. With `--skip-reachability-analysis` the call-graph step is skipped and package-level advisory matches are reported at `UNKNOWN` confidence instead.
 6. Merge and sort findings deterministically.
 7. Render in the requested format.
 8. Evaluate the policy gate and exit with the appropriate code.
@@ -117,7 +117,7 @@ is never reported as exit `0`).
 - **Rust, Python** — covered when the corresponding plugin binary is present (it is used to
   enumerate/resolve the deps, not to compute reachability). When the binary is absent the deps
   are not enumerated and the ecosystem is reported as incomplete (exit `3`) — never a clean pass.
-- **JVM / .NET / PHP / Ruby / Elixir / Dart / Swift** (Lane-A) — unaffected by this flag; they
+- **JVM / .NET / PHP / Ruby / Elixir / Dart / Swift** (lockfile-static) — unaffected by this flag; they
   are already lockfile-static package-level analyzers (no call graph exists to skip).
 
 #### Exit Codes

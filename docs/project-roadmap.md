@@ -17,7 +17,7 @@ detail, which lives in [`docs/usage.md`](./usage.md).
 | JS/TS reachability SCA | Added the Bun-compiled JS/TS reachability plugin (import-graph reachability) and npm/Yarn/pnpm ecosystem support. |
 | True reachability | Upgraded the Go plugin's call-graph algorithm to VTA on a CHA/RTA base for interface-dispatch precision; formalized the confidence-tier model. |
 | Multi-language reachability | Added Rust (`cargo metadata` dependency-closure reachability) and Python (AST-driven call-graph reachability) plugins, bringing plugin-backed coverage to four ecosystems. |
-| Additional language ecosystems | Added seven Lane-A (lockfile-static) ecosystem adapters: Maven/JVM, NuGet/.NET, Packagist/PHP, RubyGems/Ruby, Hex/Elixir, Pub/Dart, SwiftPM/Swift — bringing total ecosystem coverage to eleven. |
+| Additional language ecosystems | Added seven lockfile-static ecosystem adapters: Maven/JVM, NuGet/.NET, Packagist/PHP, RubyGems/Ruby, Hex/Elixir, Pub/Dart, SwiftPM/Swift — bringing total ecosystem coverage to eleven. |
 | Advisory intelligence, multi-source | Added GHSA and GitLab (gemnasium-db) advisory sources, the CVSS/KEV/EPSS/CWE enrichment chain, the deterministic 0-100 risk score, and VEX emission (OpenVEX, CycloneDX, CSAF). |
 | Org migration | Rebranded from the project's original working name (`anst-analyzer`) to `commit0-analyzer` under the `commit0-dev` organization. |
 
@@ -40,10 +40,10 @@ reachability across 11 ecosystems, multi-source advisory intelligence
 
 ## Deferred
 
-- **Java/JVM Lane-B (call-graph) reachability.** JVM is currently a Lane-A,
+- **Java/JVM call-graph reachability.** JVM is currently a
   lockfile-static, package-level-only adapter (`internal/cli
-  /ecosystem_maven.go`). Bytecode-level call-graph reachability (a true
-  Lane-B plugin, mirroring the Go/JS/Rust/Python plugins) has been
+  /ecosystem_maven.go`). Bytecode-level call-graph reachability (a
+  reachability plugin mirroring the Go/JS/Rust/Python plugins) has been
   considered and explicitly deferred — JVM stays at `PACKAGE_REACHABLE`
   ceiling for now.
 - **Rust symbol-level reachability.** The Rust plugin currently reasons over

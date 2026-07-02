@@ -13,7 +13,7 @@ import (
 
 // ── adapter registration ──────────────────────────────────────────────────────
 
-// TestSwiftAdapterRegistered verifies that the SwiftURL Lane-A adapter is
+// TestSwiftAdapterRegistered verifies that the SwiftURL lockfile-static adapter is
 // registered in the global registry with the expected metadata.
 func TestSwiftAdapterRegistered(t *testing.T) {
 	var found *EcosystemAdapter
@@ -46,7 +46,7 @@ func TestDetectEcosystems_PackageResolved(t *testing.T) {
 }
 
 // TestDetectEcosystems_NoPackageResolved verifies that a directory without
-// Package.resolved does not set hasSwift.
+// Package.resolved does not put swift in scope.
 func TestDetectEcosystems_NoPackageResolved(t *testing.T) {
 	dir := t.TempDir()
 	// Write Package.swift (executable; must never trigger detection alone).
@@ -55,7 +55,7 @@ func TestDetectEcosystems_NoPackageResolved(t *testing.T) {
 
 	eco := detectEcosystems(dir)
 	assert.False(t, eco.active("swift"),
-		"Package.swift alone must not set hasSwift (only Package.resolved is safe to parse)")
+		"Package.swift alone must not put swift in scope (only Package.resolved is safe to parse)")
 }
 
 // ── normalizeSwiftURL ──────────────────────────────────────────────────────────

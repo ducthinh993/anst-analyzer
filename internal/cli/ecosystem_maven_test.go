@@ -11,7 +11,7 @@ import (
 	"github.com/commit0-dev/commit0-analyzer/internal/advisory"
 )
 
-// findMavenAdapter returns the first registered Lane-A adapter with
+// findMavenAdapter returns the first registered lockfile-static adapter with
 // Language=="java" that is backed by the real parser (ecosystem_maven.go).
 // It distinguishes the real adapter from the Phase-0 stub by calling
 // ParseLockfile on a dir that contains gradle.lockfile: the real adapter
@@ -735,7 +735,7 @@ func TestMavenAdapter_ParseGradleLockfile_MalformedLines(t *testing.T) {
 // ── Single-registration invariant ────────────────────────────────────────────
 
 // TestMavenAdapter_OnlyOneJavaAdapterRegistered verifies that exactly one Java
-// Lane-A adapter is registered after all init() functions have run. Having two
+// lockfile-static adapter is registered after all init() functions have run. Having two
 // adapters (the real one from ecosystem_maven.go and the Phase-0 stub from
 // ecosystem_registry.go) causes the scan loop to run both: the stub always
 // returns complete=false → marks the scan incomplete even when the real adapter
@@ -749,7 +749,7 @@ func TestMavenAdapter_OnlyOneJavaAdapterRegistered(t *testing.T) {
 		}
 	}
 	require.Len(t, javaAdapters, 1,
-		"exactly one Java Lane-A adapter must be registered; "+
+		"exactly one Java lockfile-static adapter must be registered; "+
 			"duplicate registration (real adapter + Phase-0 stub) causes the scan loop to "+
 			"always set incomplete=true even when gradle.lockfile is fully parsed")
 }
@@ -759,8 +759,8 @@ func TestMavenAdapter_OnlyOneJavaAdapterRegistered(t *testing.T) {
 // TestMavenAdapter_DetectFiles_IncludesGradleLockfile verifies that the real
 // Maven adapter's DetectFiles includes "gradle.lockfile". Without it, a project
 // root that contains ONLY gradle.lockfile (no build.gradle or pom.xml) is not
-// detected as a Java project, so detectEcosystems returns hasJava=false, the
-// Lane-A loop is skipped, and the scan exits 0 (false-clean) rather than
+// detected as a Java project, so detectEcosystems leaves java out of scope, the
+// lockfile-static loop is skipped, and the scan exits 0 (false-clean) rather than
 // parsing the lockfile and querying OSV.
 func TestMavenAdapter_DetectFiles_IncludesGradleLockfile(t *testing.T) {
 	adapter := findMavenAdapter(t)
@@ -776,11 +776,11 @@ func TestMavenAdapter_DetectFiles_IncludesGradleLockfile(t *testing.T) {
 	assert.True(t, hasGradleLockfile,
 		"DetectFiles must include 'gradle.lockfile' (spec-mandated); "+
 			"a project root with only gradle.lockfile must be detected as a Java project "+
-			"so the Lane-A loop can parse it and query OSV")
+			"so the lockfile-static loop can parse it and query OSV")
 }
 
 // TestMavenAdapter_DetectEcosystems_GradleLockfileOnly verifies that
-// detectEcosystems sets hasJava=true when the project root contains ONLY
+// detectEcosystems puts java in scope when the project root contains ONLY
 // gradle.lockfile with no pom.xml or build.gradle present. This is the key
 // zero-config acceptance test: a Gradle project with dependency locking enabled
 // produces gradle.lockfile without necessarily having build.gradle in the same
@@ -792,8 +792,8 @@ func TestMavenAdapter_DetectEcosystems_GradleLockfileOnly(t *testing.T) {
 
 	eco := detectEcosystems(dir)
 	assert.True(t, eco.active("java"),
-		"gradle.lockfile-only project root must set hasJava=true via registry-driven detection; "+
-			"without this, the Lane-A loop is skipped and the scan exits 0 (false-clean)")
+		"gradle.lockfile-only project root must put java in scope via registry-driven detection; "+
+			"without this, the lockfile-static loop is skipped and the scan exits 0 (false-clean)")
 	assert.False(t, eco.active("go"), "no go.mod → Go must not be detected")
 }
 
@@ -829,7 +829,7 @@ func TestMavenAdapter_FullPipeline_GradleLockfileOnly(t *testing.T) {
 	assert.Equal(t, "org.springframework.boot:spring-boot-starter-web", deps[0].Name)
 
 	// Step 4: with only the real adapter registered (no stub), running the full
-	// adapter loop must produce complete=true. Simulate the scan.go Lane-A loop:
+	// adapter loop must produce complete=true. Simulate the scan.go lockfile-static loop:
 	// if ANY adapter returns complete=false, it sets incomplete=true.
 	allComplete := true
 	for _, a := range EcosystemAdapters() {
@@ -842,7 +842,7 @@ func TestMavenAdapter_FullPipeline_GradleLockfileOnly(t *testing.T) {
 		}
 	}
 	assert.True(t, allComplete,
-		"the Lane-A loop must see complete=true from all registered Java adapters "+
+		"the lockfile-static loop must see complete=true from all registered Java adapters "+
 			"for a gradle.lockfile project; the Phase-0 stub must not be present")
 }
 

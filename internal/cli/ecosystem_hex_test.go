@@ -13,7 +13,7 @@ import (
 
 // ── adapter registration ──────────────────────────────────────────────────────
 
-// TestHexAdapterRegistered verifies that the Hex Lane-A adapter is registered
+// TestHexAdapterRegistered verifies that the Hex lockfile-static adapter is registered
 // in the global registry with the expected metadata.
 func TestHexAdapterRegistered(t *testing.T) {
 	var found *EcosystemAdapter

@@ -1,6 +1,6 @@
 package cli
 
-// ecosystem_maven.go — Lane-A lockfile-static adapter for Maven (Java/Kotlin/Scala).
+// ecosystem_maven.go — lockfile-static adapter for Maven (Java/Kotlin/Scala).
 //
 // OSV ecosystem: "Maven" (covers all JVM languages that publish to Maven Central).
 // Maximum confidence: PACKAGE_REACHABLE (OSV Maven advisories carry no method-level data).
@@ -32,11 +32,11 @@ import (
 )
 
 func init() {
-	// Register the real Maven (JVM) Lane-A adapter.
+	// Register the real Maven (JVM) lockfile-static adapter.
 	//
 	// DetectFiles includes gradle.lockfile so that a project root containing only
 	// gradle.lockfile (no build.gradle co-located) is still detected as a Java
-	// project. Without it, detectEcosystems returns hasJava=false → the Lane-A
+	// project. Without it, detectEcosystems leaves java out of scope → the lockfile-static
 	// loop is skipped → false-clean exit 0 (advisories never queried).
 	RegisterEcosystemAdapter(EcosystemAdapter{
 		Ecosystem:     advisory.EcosystemMaven,
@@ -81,7 +81,7 @@ func parseMavenLockfile(root string) ([]ResolvedDep, bool, error) {
 //
 // Gradle dependency locking (Gradle 4.8+) produces gradle.lockfile when a project
 // enables `dependencyLocking {}`. The file contains the fully-resolved transitive
-// closure of all configurations, making it a safe static lockfile for Lane-A.
+// closure of all configurations, making it a safe static lockfile for lockfile-static analysis.
 //
 // File format:
 //

@@ -317,24 +317,24 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 		return policy.ExitOperationalError
 	}
 
-	// Discover Lane-A manifests in subdirectories early — before the
+	// Discover lockfile-static manifests in subdirectories early — before the
 	// nothing-to-scan gate — so that a multi-project layout where NO manifest
 	// lives at the repo root is still recognised and scanned rather than
-	// silently skipped. The result (laneADiscovered, discoveryCapped) is
+	// silently skipped. The result (lockfileDiscovered, discoveryCapped) is
 	// carried through to step 5e to avoid walking the tree a second time.
-	laneADiscovered, discoveryCapped := discoverLaneAProjectDirs(moduleRoot, lockfileAdapters())
+	lockfileDiscovered, discoveryCapped := discoverLockfileProjectDirs(moduleRoot, lockfileAdapters())
 
-	// A Lane-A subdir manifest counts as "something to scan" even when no root
+	// A lockfile-static subdir manifest counts as "something to scan" even when no root
 	// manifest exists (multi-root project layouts).
-	laneASubdirFound := false
-	for _, dirs := range laneADiscovered {
+	lockfileSubdirFound := false
+	for _, dirs := range lockfileDiscovered {
 		if len(dirs) > 0 {
-			laneASubdirFound = true
+			lockfileSubdirFound = true
 			break
 		}
 	}
 
-	if !eco.any() && !laneASubdirFound {
+	if !eco.any() && !lockfileSubdirFound {
 		fmt.Fprintf(os.Stderr,
 			"commit0-analyzer scan: %s contains no recognised ecosystem manifest "+
 				"(go.mod, package.json, Cargo.toml, pyproject.toml, requirements.txt, "+
@@ -429,7 +429,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 	// that mode the call-graph plugin step is skipped, so each matched advisory is
 	// emitted directly as a CONFIDENCE_UNKNOWN finding (no reachability was
 	// computed → we cannot narrow → unknown ≠ safe). These are unused when the
-	// flag is off. Lane-A ecosystems are unaffected: they never run a call-graph
+	// flag is off. lockfile-static ecosystems are unaffected: they never run a call-graph
 	// plugin and already emit package-level findings in step 5e.
 	var pkgLevelFindings []*commit0v1.Finding
 
@@ -437,7 +437,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 	// GitLab (gemnasium-db) serves many ecosystems from a single archive, so it is
 	// refreshed exactly once per scan here — not per-ecosystem like the OSV bundles.
 	// appendSecondarySources attaches the query-time source within each ecosystem
-	// block (Go/npm/Rust/Python/Lane-A); this step only ensures the shared cache is
+	// block (Go/npm/Rust/Python and the lockfile-static ecosystems); this step only ensures the shared cache is
 	// populated. A refresh failure degrades to the existing cache and marks the scan
 	// incomplete (unknown ≠ safe), never aborts; --offline skips the fetch.
 	if selectedSources[advisory.SourceGitLab] {
@@ -1034,10 +1034,10 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 		}
 	}
 
-	// ── 5e. Lane-A adapter registry — lockfile-static resolve and OSV query ──
+	// ── 5e. Lockfile-static adapter loop — static resolve and OSV query ──
 	//
 	// Multi-project (subdirectory) detection: before the adapter loop, walk
-	// moduleRoot to discover all directories that contain Lane-A manifests. This
+	// moduleRoot to discover all directories that contain lockfile-static manifests. This
 	// enables scanning multi-project layouts (e.g. a .NET solution with .csproj
 	// in subdirs, a monorepo with per-package composer.lock) without any extra
 	// flags. The walk is bounded by depth and an ignore-list so it stays fast.
@@ -1056,10 +1056,10 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 	//     silently truncated discovery must never read as a clean scan.
 	//   - OSV is the only source with coverage for these ecosystems; when OSV is
 	//     not in the selected sources and deps were resolved, warn + mark incomplete.
-	//   - After this block, clear the Lane-A ecosystem flags from unsupportedEco so
+	//   - After this block, clear the lockfile-static ecosystem flags from unsupportedEco so
 	//     warnUnsupportedEcosystems does not emit a duplicate warning for them.
 	//
-	// Lane-A findings are generated here (not by a plugin) because there is no
+	// lockfile-static findings are generated here (not by a plugin) because there is no
 	// reachability plugin for these ecosystems. OSV advisory matches are converted
 	// directly to PACKAGE_REACHABLE findings (max confidence for lockfile-static
 	// analysis — no call-graph data). Undecidable advisory matches (version parse
@@ -1067,26 +1067,26 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 	// with Incomplete=true so the policy gate exits 3 (not 0, which would be a
 	// false-clean pass violating "unknown ≠ safe").
 
-	// Handle capped discovery (laneADiscovered and discoveryCapped were computed
+	// Handle capped discovery (lockfileDiscovered and discoveryCapped were computed
 	// in step 1 and carried here to avoid a second walk).
 	if discoveryCapped {
 		fmt.Fprintf(os.Stderr,
-			"warning: Lane-A manifest discovery reached the %d-directory cap; "+
+			"warning: lockfile manifest discovery reached the %d-directory cap; "+
 				"some subdirectories may not have been scanned; scan marked incomplete\n",
 			discoveryMaxDirs)
 		incomplete = true
 	}
 
-	var laneAFindings []*commit0v1.Finding
-	for _, laneAAdapter := range lockfileAdapters() {
+	var lockfileFindings []*commit0v1.Finding
+	for _, lockfileAdapter := range lockfileAdapters() {
 		// Determine which directories to scan for this adapter.
 		//
 		// Start from directories found by the bounded walk. If the adapter is also
 		// active via root detection (detectEcosystems) or an explicit --language
 		// flag, ensure moduleRoot appears first so single-root behaviour is fully
 		// preserved.
-		adapterDirs := laneADiscovered[laneAAdapter.Language]
-		if eco.active(laneAAdapter.Language) {
+		adapterDirs := lockfileDiscovered[lockfileAdapter.Language]
+		if eco.active(lockfileAdapter.Language) {
 			adapterDirs = ensureRootFirst(adapterDirs, moduleRoot)
 		}
 		if len(adapterDirs) == 0 {
@@ -1099,12 +1099,12 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 		var aggDeps []ResolvedDep
 		aggComplete := true
 		for _, dir := range adapterDirs {
-			dirDeps, complete, parseErr := laneAAdapter.ParseLockfile(dir)
+			dirDeps, complete, parseErr := lockfileAdapter.ParseLockfile(dir)
 			if parseErr != nil {
 				fmt.Fprintf(os.Stderr,
 					"warning: %s lockfile parse failed (dir %s): %v; "+
 						"%s deps in that directory were not checked; scan marked incomplete\n",
-					laneAAdapter.Language, dir, parseErr, laneAAdapter.Language)
+					lockfileAdapter.Language, dir, parseErr, lockfileAdapter.Language)
 				incomplete = true
 				aggComplete = false
 				continue
@@ -1121,7 +1121,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 						"warning: %s ecosystem detected in %s but its dependency closure could not be "+
 							"resolved statically; %s deps there were not checked for vulnerabilities; "+
 							"scan marked incomplete\n",
-						laneAAdapter.Language, dir, laneAAdapter.Language)
+						lockfileAdapter.Language, dir, lockfileAdapter.Language)
 					continue
 				}
 				// Partial closure: declared/direct deps resolved, but the full transitive
@@ -1133,7 +1133,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 					"warning: %s dependency closure is partial in %s (declared/direct deps only; "+
 						"transitives unresolved without running the build tool); the known deps "+
 						"were checked but the scan is marked incomplete\n",
-					laneAAdapter.Language, dir)
+					lockfileAdapter.Language, dir)
 			}
 			aggDeps = append(aggDeps, dirDeps...)
 		}
@@ -1144,18 +1144,18 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 
 		// Dedup aggregated deps by normalised name@version before querying OSV.
 		// "runtime" wins when the same dep has different DepTypes across sub-projects.
-		deps := dedupLaneADeps(aggDeps, laneAAdapter.NormalizeName)
+		deps := dedupLockfileDeps(aggDeps, lockfileAdapter.NormalizeName)
 
 		// Query OSV advisories for the resolved closure (full when complete=true,
 		// declared/direct-only when this is a partial closure that fell through above).
-		// OSV is the only source with coverage for Lane-A ecosystems; go-vuln-db covers
+		// OSV is the only source with coverage for lockfile-static ecosystems; go-vuln-db covers
 		// only "Go" and returns (nil,nil) for all others.
 		if len(deps) > 0 && !selectedSources[advisory.SourceOSV] {
 			fmt.Fprintf(os.Stderr,
 				"warning: %s deps found but no %s-capable advisory source is selected "+
 					"(osv.dev covers %s; go-vuln-db does not); "+
 					"%s packages were not checked for vulnerabilities; scan marked incomplete\n",
-				laneAAdapter.Language, laneAAdapter.Language, laneAAdapter.Ecosystem, laneAAdapter.Language)
+				lockfileAdapter.Language, lockfileAdapter.Language, lockfileAdapter.Ecosystem, lockfileAdapter.Language)
 			incomplete = true
 		}
 
@@ -1167,56 +1167,56 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 			}
 			osvCacheDir := filepath.Join(cacheDir, "commit0-analyzer", "osv")
 
-			laneAOSV := advisory.NewOSVBundleSource(osvCacheDir)
+			lockfileOSV := advisory.NewOSVBundleSource(osvCacheDir)
 			if override := os.Getenv("COMMIT0_OSV_DB_URL"); override != "" {
-				laneAOSV.BaseURL = override
+				lockfileOSV.BaseURL = override
 			}
-			laneAOSV.ForceUpdate = flags.update
+			lockfileOSV.ForceUpdate = flags.update
 
-			addLaneAOSV := true
+			addLockfileOSV := true
 			if !flags.offline && flags.dbSnapshot == "" {
-				if refreshErr := laneAOSV.Refresh(ctx, laneAAdapter.Ecosystem); refreshErr != nil {
+				if refreshErr := lockfileOSV.Refresh(ctx, lockfileAdapter.Ecosystem); refreshErr != nil {
 					fmt.Fprintf(os.Stderr,
 						"warning: OSV %s source refresh failed (%s): %v; scan marked incomplete\n",
-						laneAAdapter.Language, advisory.SourceOSV, refreshErr)
+						lockfileAdapter.Language, advisory.SourceOSV, refreshErr)
 					incomplete = true
-					addLaneAOSV = false
+					addLockfileOSV = false
 				}
 			} else {
-				if !osvCacheDirExists(osvCacheDir, laneAAdapter.Ecosystem) {
+				if !osvCacheDirExists(osvCacheDir, lockfileAdapter.Ecosystem) {
 					if flags.sourceExplicit {
 						fmt.Fprintf(os.Stderr,
 							"warning: OSV %s cache not populated at %s (run without --offline to fetch); "+
 								"OSV %s source skipped, scan marked incomplete\n",
-							laneAAdapter.Language,
-							filepath.Join(osvCacheDir, laneAAdapter.Ecosystem),
-							laneAAdapter.Language)
+							lockfileAdapter.Language,
+							filepath.Join(osvCacheDir, lockfileAdapter.Ecosystem),
+							lockfileAdapter.Language)
 						incomplete = true
 					}
-					addLaneAOSV = false
+					addLockfileOSV = false
 				}
 			}
 
-			if addLaneAOSV {
-				laneANamedSources := []advisory.NamedSource{
-					{Name: advisory.SourceOSV, S: laneAOSV, Trust: trustOSV},
+			if addLockfileOSV {
+				lockfileNamedSources := []advisory.NamedSource{
+					{Name: advisory.SourceOSV, S: lockfileOSV, Trust: trustOSV},
 				}
-				laneANamedSources = appendSecondarySources(laneANamedSources, selectedSources, cacheDir, flags.offline)
-				laneAMultiSrc := advisory.NewMultiSource(laneANamedSources...)
-				laneAEnrichChain := buildEnrichmentChain(cacheDir, flags.offline, selectedSources)
+				lockfileNamedSources = appendSecondarySources(lockfileNamedSources, selectedSources, cacheDir, flags.offline)
+				lockfileMultiSrc := advisory.NewMultiSource(lockfileNamedSources...)
+				lockfileEnrichChain := buildEnrichmentChain(cacheDir, flags.offline, selectedSources)
 
-				laneAResolveDeps := make([]advisoryDep, len(deps))
+				lockfileResolveDeps := make([]advisoryDep, len(deps))
 				for i, dep := range deps {
 					// Apply adapter-specific name normalization.
 					// Default (NormalizeName==nil) is identity: Maven coordinates are
 					// case-sensitive and OSV records preserve their case; do NOT lowercase.
 					// A future PyPI adapter would set NormalizeName=strings.ToLower.
 					normalizedName := dep.Name
-					if laneAAdapter.NormalizeName != nil {
-						normalizedName = laneAAdapter.NormalizeName(normalizedName)
+					if lockfileAdapter.NormalizeName != nil {
+						normalizedName = lockfileAdapter.NormalizeName(normalizedName)
 					}
-					desc := laneAAdapter.Language + " pkg " + dep.Name + "@" + dep.Version
-					laneAResolveDeps[i] = advisoryDep{
+					desc := lockfileAdapter.Language + " pkg " + dep.Name + "@" + dep.Version
+					lockfileResolveDeps[i] = advisoryDep{
 						QueryName:       normalizedName,
 						Version:         dep.Version,
 						Module:          dep.Name,
@@ -1226,9 +1226,9 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 					}
 				}
 				resolveDepAdvisories(ctx, advisoryResolution{
-					Ecosystem:    laneAAdapter.Ecosystem,
-					Source:       laneAMultiSrc,
-					Enrich:       laneAEnrichChain,
+					Ecosystem:    lockfileAdapter.Ecosystem,
+					Source:       lockfileMultiSrc,
+					Enrich:       lockfileEnrichChain,
 					ProtoAdvs:    &protoAdvs,
 					SourcesByID:  sourcesByID,
 					AdvByID:      advByID,
@@ -1237,29 +1237,29 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 					// "runtime" wins; empty dep-type is treated as runtime (unknown ≠ safe).
 					DepTypeByAdv: depTypeByAdvID,
 					Incomplete:   &incomplete,
-					// Generate a Lane-A finding directly from the advisory match.
+					// Generate a lockfile-static finding directly from the advisory match.
 					// No reachability plugin exists for these ecosystems; the host converts
 					// OSV advisory matches into PACKAGE_REACHABLE findings.
 					// Undecidable matches become CONFIDENCE_UNKNOWN + Incomplete=true so
 					// the policy gate correctly exits 3 rather than silently passing clean.
 					PerAdvisory: func(dep advisoryDep, adv *advisory.Advisory) {
-						laneAConf := ceilingToConfidence(laneAAdapter.MaxConfidence)
+						lockfileConf := ceilingToConfidence(lockfileAdapter.MaxConfidence)
 						if adv.Incomplete {
-							laneAConf = commit0v1.Confidence_CONFIDENCE_UNKNOWN
+							lockfileConf = commit0v1.Confidence_CONFIDENCE_UNKNOWN
 						}
-						laneAFindings = append(laneAFindings, &commit0v1.Finding{
+						lockfileFindings = append(lockfileFindings, &commit0v1.Finding{
 							Advisory: &commit0v1.AdvisoryRef{
 								Id:      adv.ID,
 								Aliases: append([]string(nil), adv.Aliases...),
 							},
 							Module:     dep.Module,
-							Confidence: laneAConf,
+							Confidence: lockfileConf,
 							Incomplete: adv.Incomplete,
 							Pillar:     "sca",
-							Language:   laneAAdapter.Language,
+							Language:   lockfileAdapter.Language,
 						})
 					},
-				}, laneAResolveDeps)
+				}, lockfileResolveDeps)
 			}
 		}
 	}
@@ -1289,9 +1289,9 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 	// entry is already absent so clear is a no-op, but the explicit check ensures
 	// we don't accidentally leave a root-detected flag set when discovery also
 	// produced results.
-	for _, laneAAdapter := range lockfileAdapters() {
-		if eco.active(laneAAdapter.Language) || len(laneADiscovered[laneAAdapter.Language]) > 0 {
-			unsupportedEco.clear(laneAAdapter.Language)
+	for _, lockfileAdapter := range lockfileAdapters() {
+		if eco.active(lockfileAdapter.Language) || len(lockfileDiscovered[lockfileAdapter.Language]) > 0 {
+			unsupportedEco.clear(lockfileAdapter.Language)
 		}
 	}
 	if warnUnsupportedEcosystems(unsupportedEco, os.Stderr) {
@@ -1319,7 +1319,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 	// the per-ecosystem advisory loops (pkgLevelFindings). Because the plugin
 	// never runs, no NOT_REACHABLE verdict is ever produced — skipping
 	// reachability can only widen a finding to UNKNOWN, never narrow it to a
-	// false-clean. Lane-A findings (step 5e) are unaffected either way.
+	// false-clean. lockfile-static findings (step 5e) are unaffected either way.
 	var findings []*commit0v1.Finding
 	if flags.skipReachabilityAnalysis {
 		findings = append(findings, pkgLevelFindings...)
@@ -1421,7 +1421,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 
 		// Collect all findings and detect plugin errors.
 		//
-		// Lane-agnostic incomplete signal: a plugin may signal partial analysis by
+		// Ecosystem-agnostic incomplete signal: a plugin may signal partial analysis by
 		// emitting a synthetic UNKNOWN finding with Properties["synthetic"]="true".
 		// This is the same marker that host.Run appends on crash (see run.go:syntheticUnknown);
 		// a clean plugin that detects its own partiality (e.g. partial resolve, no-venv,
@@ -1447,11 +1447,11 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 			findings = append(findings, pr.Findings...)
 		}
 	}
-	// Merge Lane-A findings generated in step 5e. These were produced directly
+	// Merge lockfile-static findings generated in step 5e. These were produced directly
 	// from OSV advisory matches without a plugin; stampAdvisorySeverity,
 	// stampDepType, and stampSources apply equally to them because severityByID,
 	// depTypeByAdvID, and sourcesByID were all populated during step 5e.
-	findings = append(findings, laneAFindings...)
+	findings = append(findings, lockfileFindings...)
 	// Check whether any finding carries the synthetic partiality marker.
 	// This covers plugins that ran to completion but detected their own analysis gap.
 	if hasPartialityMarker(findings) {
@@ -1532,7 +1532,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 // hasPartialityMarker reports whether any finding in the slice signals
 // incomplete analysis. Two wire contracts are honored:
 //
-//  1. The lane-agnostic synthetic-partiality marker: a CONFIDENCE_UNKNOWN
+//  1. The ecosystem-agnostic synthetic-partiality marker: a CONFIDENCE_UNKNOWN
 //     finding whose Properties map contains the key "synthetic" set to "true".
 //     This is emitted by the host's syntheticUnknown (run.go) on plugin crash
 //     and SHOULD be emitted by any plugin that detects its own partiality.
@@ -1832,7 +1832,7 @@ func renderFindings(format string, findings []*commit0v1.Finding) error {
 // and reproducible.
 //
 // scanIncomplete is the scan-level aggregate incompleteness signal. It is ORed
-// into every statement's per-finding Incomplete flag: some lanes (e.g. the JS
+// into every statement's per-finding Incomplete flag: some ecosystems (e.g. the JS
 // modelIncomplete path) mark only the scan incomplete without stamping each
 // finding, so a NOT_REACHABLE verdict proven over that partial dependency
 // closure must still degrade to under_investigation — never not_affected. This

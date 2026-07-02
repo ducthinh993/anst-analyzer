@@ -187,5 +187,5 @@ func TestInstallDependencies_goAndPythonAreNoOps(t *testing.T) {
 
 	installDependencies(context.Background(), ecosystems{"go": true, "python": true, "java": true}, root, false)
 
-	assert.Empty(t, *calls, "Go/Python/Lane-A must not trigger an install")
+	assert.Empty(t, *calls, "Go/Python/lockfile-static ecosystems must not trigger an install")
 }
