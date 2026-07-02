@@ -14,35 +14,35 @@ import (
 // ── detection tests ───────────────────────────────────────────────────────────
 
 // TestPubDetect_LockfilePresent verifies that a directory containing pubspec.lock
-// sets hasDart=true via the registry-driven detection path.
+// puts dart in scope via the registry-driven detection path.
 func TestPubDetect_LockfilePresent(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "pubspec.lock"), []byte("packages: {}\n"), 0o644))
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasDart, "pubspec.lock present → Dart ecosystem detected")
-	assert.False(t, eco.hasPhp, "no composer.lock → PHP not detected")
-	assert.False(t, eco.hasRuby, "no Gemfile → Ruby not detected")
+	assert.True(t, eco.active("dart"), "pubspec.lock present → Dart ecosystem detected")
+	assert.False(t, eco.active("php"), "no composer.lock → PHP not detected")
+	assert.False(t, eco.active("ruby"), "no Gemfile → Ruby not detected")
 }
 
 // TestPubDetect_ManifestOnlyPresent verifies that a directory with only pubspec.yaml
-// (no pubspec.lock) still sets hasDart=true, triggering detection that will
+// (no pubspec.lock) still puts dart in scope, triggering detection that will
 // result in an incomplete scan (unknown ≠ safe).
 func TestPubDetect_ManifestOnlyPresent(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "pubspec.yaml"), []byte("name: my_app\n"), 0o644))
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasDart, "pubspec.yaml present → Dart ecosystem detected (incomplete scan)")
+	assert.True(t, eco.active("dart"), "pubspec.yaml present → Dart ecosystem detected (incomplete scan)")
 }
 
 // TestPubDetect_NeitherPresent verifies that a directory without any Dart files
-// does not set hasDart.
+// does not put dart in scope.
 func TestPubDetect_NeitherPresent(t *testing.T) {
 	dir := t.TempDir()
 
 	eco := detectEcosystems(dir)
-	assert.False(t, eco.hasDart, "no pubspec.* files → Dart ecosystem not detected")
+	assert.False(t, eco.active("dart"), "no pubspec.* files → Dart ecosystem not detected")
 }
 
 // ── parsePubspecLock tests ────────────────────────────────────────────────────
@@ -384,11 +384,11 @@ func TestPubDepType(t *testing.T) {
 
 // ── adapter registration tests ────────────────────────────────────────────────
 
-// TestPubAdapterRegistered verifies that the Pub Lane-A adapter is present in
+// TestPubAdapterRegistered verifies that the Pub lockfile-static adapter is present in
 // the global registry after package init().
 func TestPubAdapterRegistered(t *testing.T) {
-	var pubAdapter *LaneAAdapter
-	for _, a := range LaneAAdapters() {
+	var pubAdapter *EcosystemAdapter
+	for _, a := range EcosystemAdapters() {
 		a := a
 		if a.Language == "dart" {
 			pubAdapter = &a
@@ -411,9 +411,9 @@ func TestPubAdapterRegistered(t *testing.T) {
 func TestPubResolveLanguageDart(t *testing.T) {
 	eco, err := resolveLanguage("dart", ecosystems{})
 	require.NoError(t, err)
-	assert.True(t, eco.hasDart, "--language dart must set hasDart=true")
-	assert.False(t, eco.hasGo, "--language dart must not set hasGo")
-	assert.False(t, eco.hasPhp, "--language dart must not set hasPhp")
+	assert.True(t, eco.active("dart"), "--language dart must put dart in scope")
+	assert.False(t, eco.active("go"), "--language dart must not put go in scope")
+	assert.False(t, eco.active("php"), "--language dart must not put php in scope")
 }
 
 // ── scan guard tests ──────────────────────────────────────────────────────────
@@ -434,14 +434,14 @@ func buildPubTestBinary(t *testing.T) string {
 // go.mod / package.json / Cargo.toml / etc.) does NOT hit the early-exit
 // "no recognised ecosystem manifest" guard in runScan.
 //
-// Before the fix to scan.go:306, eco.hasDart was omitted from the guard condition:
+// Before the fix to scan.go:306, eco.active("dart") was omitted from the guard condition:
 //
-//	if !eco.hasGo && !eco.hasJS && ... && !eco.hasElixir { // missing !eco.hasDart
+//	if !eco.active("go") && !eco.active("js") && ... && !eco.active("elixir") { // missing !eco.active("dart")
 //
 // This caused every Dart-only repo to exit with ExitOperationalError(3) and the
-// message "contains no recognised ecosystem manifest", killing the Lane-A adapter
-// loop before it ever ran. The guard must include !eco.hasDart so that a repo with
-// pubspec.lock (eco.hasDart=true) is not rejected.
+// message "contains no recognised ecosystem manifest", killing the lockfile-static adapter
+// loop before it ever ran. The guard must include !eco.active("dart") so that a repo with
+// pubspec.lock (eco.active("dart")=true) is not rejected.
 func TestPubScanGuard_DartOnlyAutoDetectPassesGuard(t *testing.T) {
 	cliBin := buildPubTestBinary(t)
 
@@ -461,16 +461,16 @@ func TestPubScanGuard_DartOnlyAutoDetectPassesGuard(t *testing.T) {
 	stderr := stderrBuf.String()
 	t.Logf("stderr: %q", stderr)
 
-	// The guard must NOT fire. If it fires, scan.go:306 still omits !eco.hasDart.
+	// The guard must NOT fire. If it fires, scan.go:306 still omits !eco.active("dart").
 	assert.NotContains(t, stderr, "no recognised ecosystem manifest",
-		"Dart-only repo (pubspec.lock detected → hasDart=true) must NOT hit the "+
-			"no-ecosystem guard; add !eco.hasDart to the scan.go:306 guard condition")
+		"Dart-only repo (pubspec.lock detected → dart in scope) must NOT hit the "+
+			"no-ecosystem guard; a detected dart ecosystem must count as something to scan")
 }
 
 // TestPubScanGuard_LanguageDartFlagPassesGuard verifies that --language dart on a
 // directory that contains pubspec.lock does NOT trigger the early-exit guard.
 //
-// resolveLanguage("dart") returns ecosystems{hasDart:true}. Without !eco.hasDart in
+// resolveLanguage("dart") returns ecosystems{"dart":true}. Without !eco.active("dart") in
 // the guard, this path also exits with ExitOperationalError(3) before any scan runs,
 // breaking the --language dart narrowing filter entirely.
 func TestPubScanGuard_LanguageDartFlagPassesGuard(t *testing.T) {

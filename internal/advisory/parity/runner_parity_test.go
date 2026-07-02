@@ -56,7 +56,7 @@ func TestParityHarness(t *testing.T) {
 	opts := RunOptions{
 		Commit0Binary: bin,
 		Timeout:    10 * time.Minute,
-		// Narrow the ecosystems we have validated reachability lanes for; others
+		// Narrow the ecosystems we have validated reachability plugins for; others
 		// auto-detect.
 		Language: map[string]string{"go": "go", "python": "python"},
 		ResolvePath: func(e CorpusEntry) (string, error) {

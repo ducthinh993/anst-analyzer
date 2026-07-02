@@ -88,14 +88,17 @@ stub drift (`buf generate` + `git diff`).
 
 ## Registry patterns — panic on misconfiguration, not silent skip
 
-Two registries in this codebase intentionally `panic()` at init time rather
-than degrade quietly, because a silently-missing entry would be a soundness
-regression discovered only in production:
+Registries in this codebase fail loudly rather than degrade quietly, because
+a silently-missing entry would be a soundness regression discovered only in
+production:
 
-- `internal/cli/ecosystem_registry.go` — `RegisterLaneAAdapter` panics on a
-  duplicate registration for the same `Language`, and the dispatch path
-  panics if a detected `Language` has no wired adapter. When adding a new
-  Lane-A ecosystem, register it in `ecosystem_registry.go`'s `init()`
+- `internal/cli/ecosystem_registry.go` — `RegisterEcosystemAdapter` panics on
+  a `Language` missing from `orderedLanguages` (a detected-but-unlisted
+  ecosystem would be skipped without a warning — a false-clean scan) and on a
+  lockfile-static adapter declaring a symbol-level ceiling (lockfile parsing
+  cannot prove reachability). The one-adapter-per-language invariant is
+  test-enforced. When adding a new lockfile-static ecosystem, add its
+  language to `orderedLanguages` and register the adapter in an `init()`
   alongside its adapter file.
 - `internal/advisory/comparator_registry.go` — panics on duplicate
   comparator registration for the same ecosystem. When adding a new
@@ -138,7 +141,7 @@ policy gate must preserve all of the following:
   `not_affected`; an incomplete `NOT_REACHABLE` or any `UNKNOWN` maps to
   `under_investigation`. See `internal/vex/`'s `MapStatus`.
 - **ACE-safety: never execute a project's manifest or build scripts to
-  determine reachability or dependencies.** Lane-A adapters parse lockfiles
+  determine reachability or dependencies.** Lockfile-static adapters parse lockfiles
   only (`pom.xml`, `Gemfile`, `mix.exs`, `Package.swift`, and similar
   manifests are read for direct-dependency hints, never executed). Where
   the host installs dependencies for reachability (JS, Rust), install

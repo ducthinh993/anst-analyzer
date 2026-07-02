@@ -13,11 +13,11 @@ import (
 
 // ── adapter registration ──────────────────────────────────────────────────────
 
-// TestPackagistAdapterRegistered verifies that the Packagist Lane-A adapter is
+// TestPackagistAdapterRegistered verifies that the Packagist lockfile-static adapter is
 // registered in the global registry with the expected metadata.
 func TestPackagistAdapterRegistered(t *testing.T) {
-	var found *LaneAAdapter
-	for _, a := range LaneAAdapters() {
+	var found *EcosystemAdapter
+	for _, a := range EcosystemAdapters() {
 		if a.Language == "php" {
 			a := a
 			found = &a
@@ -40,9 +40,9 @@ func TestDetectEcosystems_ComposerLock(t *testing.T) {
 		[]byte(composerLockRuntimeAndDev), 0o644))
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasPhp, "composer.lock present → PHP ecosystem detected")
-	assert.False(t, eco.hasGo, "no go.mod → Go not detected")
-	assert.False(t, eco.hasDotnet, "no packages.lock.json → .NET not detected")
+	assert.True(t, eco.active("php"), "composer.lock present → PHP ecosystem detected")
+	assert.False(t, eco.active("go"), "no go.mod → Go not detected")
+	assert.False(t, eco.active("dotnet"), "no packages.lock.json → .NET not detected")
 }
 
 // TestDetectEcosystems_ComposerJSON verifies that composer.json alone triggers
@@ -53,7 +53,7 @@ func TestDetectEcosystems_ComposerJSON(t *testing.T) {
 		[]byte(`{"require": {"monolog/monolog": "^2.0"}}`), 0o644))
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasPhp, "composer.json present → PHP ecosystem detected (incomplete scan)")
+	assert.True(t, eco.active("php"), "composer.json present → PHP ecosystem detected (incomplete scan)")
 }
 
 // ── parseComposerLockfile ─────────────────────────────────────────────────────

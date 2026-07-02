@@ -18,27 +18,28 @@ import (
 // to avoid leaking state into other test cases.
 func withCleanRegistry(t *testing.T, fn func()) {
 	t.Helper()
-	saved := laneARegistry
-	laneARegistry = nil
-	defer func() { laneARegistry = saved }()
+	saved := ecosystemRegistry
+	ecosystemRegistry = nil
+	defer func() { ecosystemRegistry = saved }()
 	fn()
 }
 
-// ── RegisterLaneAAdapter + LaneAAdapters ─────────────────────────────────────
+// ── RegisterEcosystemAdapter + EcosystemAdapters ─────────────────────────────
 
-// TestRegisterLaneAAdapter_SingleAdapter verifies that a registered adapter
-// appears in the LaneAAdapters snapshot.
-func TestRegisterLaneAAdapter_SingleAdapter(t *testing.T) {
+// TestRegisterEcosystemAdapter_SingleAdapter verifies that a registered adapter
+// appears in the EcosystemAdapters snapshot.
+func TestRegisterEcosystemAdapter_SingleAdapter(t *testing.T) {
 	withCleanRegistry(t, func() {
-		a := LaneAAdapter{
+		a := EcosystemAdapter{
 			Ecosystem:     advisory.EcosystemMaven,
 			Language:      "java",
 			DetectFiles:   []string{"pom.xml"},
+			MaxConfidence: ceilingPackage,
 			ParseLockfile: func(_ string) ([]ResolvedDep, bool, error) { return nil, true, nil },
 		}
-		RegisterLaneAAdapter(a)
+		RegisterEcosystemAdapter(a)
 
-		adapters := LaneAAdapters()
+		adapters := EcosystemAdapters()
 		require.Len(t, adapters, 1, "exactly one adapter should be registered")
 		assert.Equal(t, advisory.EcosystemMaven, adapters[0].Ecosystem)
 		assert.Equal(t, "java", adapters[0].Language)
@@ -46,18 +47,18 @@ func TestRegisterLaneAAdapter_SingleAdapter(t *testing.T) {
 	})
 }
 
-// TestRegisterLaneAAdapter_MultipleAdapters verifies that multiple adapters
-// sharing the same known Language are registered in insertion order.
-// (Multiple adapters per Language is permitted by the registry; useful when
-// a single language ecosystem has several lockfile variants, e.g. Maven and
-// Gradle once both have real parsers.)
-func TestRegisterLaneAAdapter_MultipleAdapters(t *testing.T) {
+// TestRegisterEcosystemAdapter_MultipleAdapters verifies that multiple adapters
+// sharing the same Language are registered in insertion order. (Multiple
+// adapters per Language is permitted by the registry; useful when a single
+// language ecosystem has several lockfile variants, e.g. Maven and Gradle once
+// both have real parsers.)
+func TestRegisterEcosystemAdapter_MultipleAdapters(t *testing.T) {
 	withCleanRegistry(t, func() {
-		RegisterLaneAAdapter(LaneAAdapter{Ecosystem: "Maven-A", Language: "java", ParseLockfile: func(_ string) ([]ResolvedDep, bool, error) { return nil, true, nil }})
-		RegisterLaneAAdapter(LaneAAdapter{Ecosystem: "Maven-B", Language: "java", ParseLockfile: func(_ string) ([]ResolvedDep, bool, error) { return nil, true, nil }})
-		RegisterLaneAAdapter(LaneAAdapter{Ecosystem: "Maven-C", Language: "java", ParseLockfile: func(_ string) ([]ResolvedDep, bool, error) { return nil, true, nil }})
+		RegisterEcosystemAdapter(EcosystemAdapter{Ecosystem: "Maven-A", Language: "java", ParseLockfile: func(_ string) ([]ResolvedDep, bool, error) { return nil, true, nil }})
+		RegisterEcosystemAdapter(EcosystemAdapter{Ecosystem: "Maven-B", Language: "java", ParseLockfile: func(_ string) ([]ResolvedDep, bool, error) { return nil, true, nil }})
+		RegisterEcosystemAdapter(EcosystemAdapter{Ecosystem: "Maven-C", Language: "java", ParseLockfile: func(_ string) ([]ResolvedDep, bool, error) { return nil, true, nil }})
 
-		adapters := LaneAAdapters()
+		adapters := EcosystemAdapters()
 		require.Len(t, adapters, 3)
 		assert.Equal(t, "Maven-A", adapters[0].Ecosystem)
 		assert.Equal(t, "Maven-B", adapters[1].Ecosystem)
@@ -65,110 +66,127 @@ func TestRegisterLaneAAdapter_MultipleAdapters(t *testing.T) {
 	})
 }
 
-// TestLaneAAdapters_ReturnsSnapshot verifies that mutating the returned slice
+// TestEcosystemAdapters_ReturnsSnapshot verifies that mutating the returned slice
 // does not affect the registry (the returned value is a copy, not a reference).
-func TestLaneAAdapters_ReturnsSnapshot(t *testing.T) {
+func TestEcosystemAdapters_ReturnsSnapshot(t *testing.T) {
 	withCleanRegistry(t, func() {
-		RegisterLaneAAdapter(LaneAAdapter{
+		RegisterEcosystemAdapter(EcosystemAdapter{
 			Ecosystem:     "Maven-Original",
 			Language:      "java",
 			ParseLockfile: func(_ string) ([]ResolvedDep, bool, error) { return nil, true, nil },
 		})
 
-		snap1 := LaneAAdapters()
+		snap1 := EcosystemAdapters()
 		require.Len(t, snap1, 1)
 
 		// Mutate the snapshot.
 		snap1[0].Ecosystem = "Maven-Mutated"
 
 		// A fresh call must reflect the original registry, not the mutation.
-		snap2 := LaneAAdapters()
+		snap2 := EcosystemAdapters()
 		require.Len(t, snap2, 1)
 		assert.Equal(t, "Maven-Original", snap2[0].Ecosystem,
-			"LaneAAdapters must return a copy; mutations must not affect the registry")
+			"EcosystemAdapters must return a copy; mutations must not affect the registry")
 	})
 }
 
-// ── laneAAdapterActive ────────────────────────────────────────────────────────
+// TestLockfileAdapters_OnlyParseLockfileBacked verifies that lockfileAdapters
+// returns exactly the adapters whose closure is resolved by static lockfile
+// parsing (ParseLockfile != nil), excluding plugin-backed ecosystems.
+func TestLockfileAdapters_OnlyParseLockfileBacked(t *testing.T) {
+	withCleanRegistry(t, func() {
+		// A plugin-backed entry (ParseLockfile nil) plus a lockfile-static entry.
+		RegisterEcosystemAdapter(EcosystemAdapter{Ecosystem: advisory.EcosystemGo, Language: "go", MaxConfidence: ceilingSymbol})
+		RegisterEcosystemAdapter(EcosystemAdapter{
+			Ecosystem:     advisory.EcosystemMaven,
+			Language:      "java",
+			MaxConfidence: ceilingPackage,
+			ParseLockfile: func(_ string) ([]ResolvedDep, bool, error) { return nil, true, nil },
+		})
 
-// TestLaneAAdapterActive_Java_WhenHasJava verifies that the Java adapter is
-// active when eco.hasJava is true.
-func TestLaneAAdapterActive_Java_WhenHasJava(t *testing.T) {
-	eco := ecosystems{hasJava: true}
-	assert.True(t, laneAAdapterActive("java", eco),
-		"laneAAdapterActive(java) must be true when eco.hasJava=true")
+		lockfile := lockfileAdapters()
+		require.Len(t, lockfile, 1, "only the ParseLockfile-backed adapter must be returned")
+		assert.Equal(t, "java", lockfile[0].Language,
+			"plugin-backed (nil ParseLockfile) adapters must be excluded from the lockfile set")
+	})
 }
 
-// TestLaneAAdapterActive_Java_WhenNotHasJava verifies that the Java adapter
-// is inactive when eco.hasJava is false.
-func TestLaneAAdapterActive_Java_WhenNotHasJava(t *testing.T) {
-	eco := ecosystems{hasJava: false}
-	assert.False(t, laneAAdapterActive("java", eco),
-		"laneAAdapterActive(java) must be false when eco.hasJava=false")
+// ── ecosystems set (active / set / clear / any / clone) ───────────────────────
+
+// TestEcosystems_ActiveSetClear verifies the fundamental set operations: a
+// language is inactive until set, active after set, inactive again after clear.
+func TestEcosystems_ActiveSetClear(t *testing.T) {
+	e := make(ecosystems)
+	assert.False(t, e.active("java"), "precondition: java inactive in empty set")
+	e.set("java")
+	assert.True(t, e.active("java"), "set(java) → active(java) must be true")
+	e.clear("java")
+	assert.False(t, e.active("java"), "clear(java) → active(java) must be false")
 }
 
-// TestLaneAAdapterActive_UnknownLanguage verifies that an unregistered language
-// key returns false regardless of the ecosystem detection state.
-func TestLaneAAdapterActive_UnknownLanguage(t *testing.T) {
-	eco := ecosystems{hasGo: true, hasJS: true, hasRust: true, hasPython: true, hasJava: true}
-	assert.False(t, laneAAdapterActive("nuget", eco),
-		"unregistered language must return false even when all ecosystems are detected")
-	assert.False(t, laneAAdapterActive("", eco),
-		"empty language key must return false")
+// TestEcosystems_ActiveUnknownKey verifies that an unregistered language key and
+// the empty key are inactive regardless of other detected ecosystems (no
+// cross-contamination; --language is a narrowing filter, never activation).
+func TestEcosystems_ActiveUnknownKey(t *testing.T) {
+	eco := ecosystems{"go": true, "js": true, "rust": true, "python": true, "java": true}
+	assert.False(t, eco.active("nuget"), "an unregistered key must be inactive even when other ecosystems are detected")
+	assert.False(t, eco.active(""), "the empty key must be inactive")
 }
 
-// TestLaneAAdapterActive_JavaNotActivatedByOtherFlags verifies that the Java
-// active check is not triggered by other ecosystem flags (no cross-contamination).
-func TestLaneAAdapterActive_JavaNotActivatedByOtherFlags(t *testing.T) {
-	eco := ecosystems{hasGo: true, hasJS: true, hasRust: true, hasPython: true, hasJava: false}
-	assert.False(t, laneAAdapterActive("java", eco),
-		"Java active check must not be triggered by Go/JS/Rust/Python flags")
+// TestEcosystems_ClearDoesNotAffectOthers verifies that clearing one language
+// does not disturb the others.
+func TestEcosystems_ClearDoesNotAffectOthers(t *testing.T) {
+	e := ecosystems{"go": true, "js": true, "rust": true, "python": true, "java": true}
+	e.clear("java")
+	assert.True(t, e.active("go"), "Go must be unaffected by clear(java)")
+	assert.True(t, e.active("js"), "JS must be unaffected by clear(java)")
+	assert.True(t, e.active("rust"), "Rust must be unaffected by clear(java)")
+	assert.True(t, e.active("python"), "Python must be unaffected by clear(java)")
+	assert.False(t, e.active("java"), "Java must be cleared")
 }
 
-// ── setLaneAFlag / clearLaneAFlag ─────────────────────────────────────────────
-
-// TestSetLaneAFlag_Java verifies that setLaneAFlag("java") sets eco.hasJava.
-func TestSetLaneAFlag_Java(t *testing.T) {
-	var e ecosystems
-	assert.False(t, e.hasJava, "precondition: hasJava starts false")
-	setLaneAFlag(&e, "java")
-	assert.True(t, e.hasJava, "setLaneAFlag(java) must set hasJava=true")
+// TestEcosystems_Any verifies the emptiness predicate used by the nothing-to-scan
+// guard.
+func TestEcosystems_Any(t *testing.T) {
+	assert.False(t, make(ecosystems).any(), "empty set → any() must be false")
+	assert.True(t, ecosystems{"go": true}.any(), "one entry → any() must be true")
 }
 
-// TestSetLaneAFlag_UnknownLang verifies that setLaneAFlag with an unknown
-// language is a no-op and does not panic.
-func TestSetLaneAFlag_UnknownLang(t *testing.T) {
-	e := ecosystems{hasGo: true}
-	setLaneAFlag(&e, "nuget") // must not panic
-	assert.True(t, e.hasGo, "setLaneAFlag with unknown language must not alter other flags")
+// TestEcosystems_CloneIsIndependent verifies that clone returns an independent
+// copy. This guards the unsupportedEco aliasing hazard: ecosystems is a map
+// (reference type), so a plain assignment would alias and reducing the copy would
+// corrupt the original set that later plugin registration reads.
+func TestEcosystems_CloneIsIndependent(t *testing.T) {
+	orig := ecosystems{"go": true, "rust": true}
+	cp := orig.clone()
+	cp.clear("rust")
+	cp.set("java")
+
+	assert.True(t, orig.active("rust"), "clearing the clone must not clear the original")
+	assert.False(t, orig.active("java"), "adding to the clone must not add to the original")
+	assert.False(t, cp.active("rust"), "the clone reflects its own mutation")
+	assert.True(t, cp.active("java"), "the clone reflects its own mutation")
 }
 
-// TestClearLaneAFlag_Java verifies that clearLaneAFlag("java") clears eco.hasJava.
-func TestClearLaneAFlag_Java(t *testing.T) {
-	e := ecosystems{hasJava: true}
-	assert.True(t, e.hasJava, "precondition: hasJava starts true")
-	clearLaneAFlag(&e, "java")
-	assert.False(t, e.hasJava, "clearLaneAFlag(java) must set hasJava=false")
+// ── isKnownLanguage ───────────────────────────────────────────────────────────
+
+// TestIsKnownLanguage_ValidValues verifies that every supported --language value
+// is recognised.
+func TestIsKnownLanguage_ValidValues(t *testing.T) {
+	for _, lang := range []string{
+		"go", "js", "rust", "python",
+		"java", "dotnet", "php", "ruby", "elixir", "dart", "swift",
+	} {
+		assert.True(t, isKnownLanguage(lang), lang+" must be a known --language value")
+	}
 }
 
-// TestClearLaneAFlag_Java_DoesNotAffectOtherFlags verifies that clearing Java
-// does not disturb other ecosystem flags.
-func TestClearLaneAFlag_Java_DoesNotAffectOtherFlags(t *testing.T) {
-	e := ecosystems{hasGo: true, hasJS: true, hasRust: true, hasPython: true, hasJava: true}
-	clearLaneAFlag(&e, "java")
-	assert.True(t, e.hasGo, "Go flag must be unaffected by clearLaneAFlag(java)")
-	assert.True(t, e.hasJS, "JS flag must be unaffected by clearLaneAFlag(java)")
-	assert.True(t, e.hasRust, "Rust flag must be unaffected by clearLaneAFlag(java)")
-	assert.True(t, e.hasPython, "Python flag must be unaffected by clearLaneAFlag(java)")
-	assert.False(t, e.hasJava, "Java flag must be cleared")
-}
-
-// TestClearLaneAFlag_UnknownLang verifies that clearLaneAFlag with an unknown
-// language is a no-op and does not panic.
-func TestClearLaneAFlag_UnknownLang(t *testing.T) {
-	e := ecosystems{hasJava: true}
-	clearLaneAFlag(&e, "nuget") // must not panic
-	assert.True(t, e.hasJava, "clearLaneAFlag with unknown language must not alter other flags")
+// TestIsKnownLanguage_UnknownValues verifies that unregistered values (including
+// OSV ecosystem names and the empty string) are not accepted --language values.
+func TestIsKnownLanguage_UnknownValues(t *testing.T) {
+	assert.False(t, isKnownLanguage("nuget"), "nuget is an OSV ecosystem name, not a --language value")
+	assert.False(t, isKnownLanguage("kotlin"), "unregistered language must return false")
+	assert.False(t, isKnownLanguage(""), "empty string is not a known language")
 }
 
 // ── Java adapter (registered by init()) ──────────────────────────────────────
@@ -176,8 +194,8 @@ func TestClearLaneAFlag_UnknownLang(t *testing.T) {
 // TestJavaAdapter_IsRegistered verifies that the Java adapter is present in the
 // global registry after package init.
 func TestJavaAdapter_IsRegistered(t *testing.T) {
-	var javaAdapter *LaneAAdapter
-	for _, a := range LaneAAdapters() {
+	var javaAdapter *EcosystemAdapter
+	for _, a := range EcosystemAdapters() {
 		if a.Language == "java" {
 			a := a // capture
 			javaAdapter = &a
@@ -192,8 +210,8 @@ func TestJavaAdapter_IsRegistered(t *testing.T) {
 // TestJavaAdapter_DetectFiles verifies that the Java adapter lists the expected
 // Maven and Gradle manifest files for zero-config auto-detection.
 func TestJavaAdapter_DetectFiles(t *testing.T) {
-	var javaAdapter *LaneAAdapter
-	for _, a := range LaneAAdapters() {
+	var javaAdapter *EcosystemAdapter
+	for _, a := range EcosystemAdapters() {
 		if a.Language == "java" {
 			a := a
 			javaAdapter = &a
@@ -219,8 +237,8 @@ func TestJavaAdapter_ParseLockfile_PomOnly_ReturnsIncomplete(t *testing.T) {
 	// Create a realistic pom.xml so the adapter has a "real" project root.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "pom.xml"), []byte(`<?xml version="1.0"?><project/>`), 0o644))
 
-	var javaAdapter *LaneAAdapter
-	for _, a := range LaneAAdapters() {
+	var javaAdapter *EcosystemAdapter
+	for _, a := range EcosystemAdapters() {
 		if a.Language == "java" {
 			a := a
 			javaAdapter = &a
@@ -237,7 +255,7 @@ func TestJavaAdapter_ParseLockfile_PomOnly_ReturnsIncomplete(t *testing.T) {
 			"this is an intentional degrade, not a Phase-0 stub — the real adapter is present "+
 			"but cannot produce a complete closure without a gradle.lockfile")
 	assert.Nil(t, deps,
-		"LaneAAdapter contract: NEVER return a partial closure with complete=false; "+
+		"EcosystemAdapter contract: NEVER return a partial closure with complete=false; "+
 			"a partial dep list would produce false NOT_REACHABLE for missing transitives")
 }
 
@@ -248,8 +266,8 @@ func TestJavaAdapter_ParseLockfile_PomOnly_ReturnsIncomplete(t *testing.T) {
 func TestJavaAdapter_ParseLockfile_NoSubprocess(t *testing.T) {
 	dir := t.TempDir() // no pom.xml, no Gradle files — intentionally empty
 
-	var javaAdapter *LaneAAdapter
-	for _, a := range LaneAAdapters() {
+	var javaAdapter *EcosystemAdapter
+	for _, a := range EcosystemAdapters() {
 		if a.Language == "java" {
 			a := a
 			javaAdapter = &a
@@ -269,7 +287,7 @@ func TestJavaAdapter_ParseLockfile_NoSubprocess(t *testing.T) {
 // ── detectEcosystems + registry integration ───────────────────────────────────
 
 // TestDetectEcosystems_JavaViaPomXML_RegistryDriven verifies that detectEcosystems
-// sets eco.hasJava when pom.xml is present, and that this detection is driven by
+// marks java active when pom.xml is present, and that this detection is driven by
 // the Java adapter's DetectFiles (not hardcoded in detectEcosystems).
 // This is the integration proof for the table-driven detection refactor.
 func TestDetectEcosystems_JavaViaPomXML_RegistryDriven(t *testing.T) {
@@ -277,22 +295,22 @@ func TestDetectEcosystems_JavaViaPomXML_RegistryDriven(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("{}"), 0o644))
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasJava,
-		"pom.xml present → eco.hasJava must be true (registry-driven detection)")
-	assert.False(t, eco.hasGo, "no go.mod → Go must not be detected")
+	assert.True(t, eco.active("java"),
+		"pom.xml present → java must be active (registry-driven detection)")
+	assert.False(t, eco.active("go"), "no go.mod → Go must not be detected")
 }
 
 // TestDetectEcosystems_NoJavaManifests_RegistryDriven verifies that no Java
-// manifest → hasJava=false even after the registry-driven refactor.
+// manifest → java inactive even after the registry-driven refactor.
 func TestDetectEcosystems_NoJavaManifests_RegistryDriven(t *testing.T) {
 	dir := t.TempDir()
 	// Only a go.mod is present — no Java manifest.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module m"), 0o644))
 
 	eco := detectEcosystems(dir)
-	assert.False(t, eco.hasJava,
-		"no Java manifest → eco.hasJava must be false after registry-driven detection refactor")
-	assert.True(t, eco.hasGo, "go.mod present → Go must be detected")
+	assert.False(t, eco.active("java"),
+		"no Java manifest → java must be inactive after registry-driven detection refactor")
+	assert.True(t, eco.active("go"), "go.mod present → Go must be detected")
 }
 
 // TestDetectEcosystems_PolyglotWithJavaAndGo_RegistryDriven verifies that a
@@ -304,8 +322,8 @@ func TestDetectEcosystems_PolyglotWithJavaAndGo_RegistryDriven(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("{}"), 0o644))
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasGo, "go.mod → Go detected")
-	assert.True(t, eco.hasJava, "pom.xml → Java detected via registry")
+	assert.True(t, eco.active("go"), "go.mod → Go detected")
+	assert.True(t, eco.active("java"), "pom.xml → Java detected via registry")
 }
 
 // ── ResolvedDep ───────────────────────────────────────────────────────────────
@@ -416,32 +434,32 @@ func TestMergeDepType_MultipleAdvisories(t *testing.T) {
 
 // ── NormalizeName ─────────────────────────────────────────────────────────────
 
-// TestLaneAAdapter_NormalizeName_NilIsIdentity verifies that when NormalizeName
+// TestEcosystemAdapter_NormalizeName_NilIsIdentity verifies that when NormalizeName
 // is nil, the adapter does not transform the package name. Maven coordinates
 // are case-sensitive; lowercasing an artifactId would miss OSV records.
-func TestLaneAAdapter_NormalizeName_NilIsIdentity(t *testing.T) {
+func TestEcosystemAdapter_NormalizeName_NilIsIdentity(t *testing.T) {
 	withCleanRegistry(t, func() {
-		RegisterLaneAAdapter(LaneAAdapter{
+		RegisterEcosystemAdapter(EcosystemAdapter{
 			Ecosystem:     "Maven",
 			Language:      "java",
 			DetectFiles:   []string{"pom.xml"},
 			ParseLockfile: func(_ string) ([]ResolvedDep, bool, error) { return nil, true, nil },
 			NormalizeName: nil, // explicitly nil
 		})
-		adapters := LaneAAdapters()
+		adapters := EcosystemAdapters()
 		require.Len(t, adapters, 1)
 		assert.Nil(t, adapters[0].NormalizeName,
 			"nil NormalizeName means identity; caller must use dep.Name as-is for Maven")
 	})
 }
 
-// TestLaneAAdapter_NormalizeName_FuncIsCalledWithDepName verifies that a
+// TestEcosystemAdapter_NormalizeName_FuncIsCalledWithDepName verifies that a
 // non-nil NormalizeName function is stored and can be invoked. This proves
 // the field is wired correctly for future adapters (e.g. PyPI).
-func TestLaneAAdapter_NormalizeName_FuncIsCalledWithDepName(t *testing.T) {
+func TestEcosystemAdapter_NormalizeName_FuncIsCalledWithDepName(t *testing.T) {
 	withCleanRegistry(t, func() {
 		var calledWith string
-		RegisterLaneAAdapter(LaneAAdapter{
+		RegisterEcosystemAdapter(EcosystemAdapter{
 			Ecosystem:   "Maven",
 			Language:    "java",
 			DetectFiles: []string{"pom.xml"},
@@ -453,7 +471,7 @@ func TestLaneAAdapter_NormalizeName_FuncIsCalledWithDepName(t *testing.T) {
 				return "normalized:" + name
 			},
 		})
-		adapters := LaneAAdapters()
+		adapters := EcosystemAdapters()
 		require.Len(t, adapters, 1)
 		require.NotNil(t, adapters[0].NormalizeName)
 		result := adapters[0].NormalizeName("Com.Example:MyLib")
@@ -463,57 +481,65 @@ func TestLaneAAdapter_NormalizeName_FuncIsCalledWithDepName(t *testing.T) {
 	})
 }
 
-// ── RegisterLaneAAdapter panic on unknown language ─────────────────────────
+// ── registration guards ───────────────────────────────────────────────────────
 
-// TestRegisterLaneAAdapter_PanicsOnUnknownLanguage verifies that registering
-// an adapter whose Language is not handled by setLaneAFlag panics at init time.
-// This prevents the "silent no-op detection trap": an adapter with an
-// unhandled language is detected (DetectFiles match) but never runs, with no
-// warning to the operator.
-func TestRegisterLaneAAdapter_PanicsOnUnknownLanguage(t *testing.T) {
-	withCleanRegistry(t, func() {
-		assert.Panics(t, func() {
-			RegisterLaneAAdapter(LaneAAdapter{
-				Ecosystem:     "NuGet",
-				Language:      "nuget", // not in setLaneAFlag switch
-				DetectFiles:   []string{"*.csproj"},
-				ParseLockfile: func(_ string) ([]ResolvedDep, bool, error) { return nil, true, nil },
-			})
-		}, "registering an adapter with an unhandled Language must panic at init time "+
-			"(prevents silent coverage gap)")
-	})
-}
-
-// TestRegisterLaneAAdapter_JavaDoesNotPanic verifies that the Java adapter
-// (a known language) registers without panic.
-func TestRegisterLaneAAdapter_JavaDoesNotPanic(t *testing.T) {
+// TestRegisterEcosystemAdapter_ValidRegistration verifies that a well-formed
+// adapter (known language, lockfile parser with a package ceiling) registers
+// without panicking.
+func TestRegisterEcosystemAdapter_ValidRegistration(t *testing.T) {
 	withCleanRegistry(t, func() {
 		assert.NotPanics(t, func() {
-			RegisterLaneAAdapter(LaneAAdapter{
-				Ecosystem:     "Maven",
-				Language:      "java",
-				DetectFiles:   []string{"pom.xml"},
+			RegisterEcosystemAdapter(EcosystemAdapter{
+				Ecosystem:     "NuGet",
+				Language:      "dotnet",
+				DetectFiles:   []string{"*.csproj"},
+				MaxConfidence: ceilingPackage,
 				ParseLockfile: func(_ string) ([]ResolvedDep, bool, error) { return nil, true, nil },
 			})
-		}, "java is a known language; RegisterLaneAAdapter must not panic")
+		})
 	})
 }
 
-// ── laneALanguageKnown ────────────────────────────────────────────────────────
-
-// TestLaneALanguageKnown_JavaIsKnown verifies that "java" is a known language.
-func TestLaneALanguageKnown_JavaIsKnown(t *testing.T) {
-	assert.True(t, laneALanguageKnown("java"),
-		"java must be a known language (has a case in setLaneAFlag)")
+// TestRegisterEcosystemAdapter_PanicsOnUnknownLanguage: a Language missing from
+// orderedLanguages would be detectable via DetectFiles but invisible to
+// warnUnsupportedEcosystems (which iterates orderedLanguages only), so a
+// project using it could scan nothing and still exit 0. Registration must fail
+// loudly at init time instead of shipping that silent false-clean.
+func TestRegisterEcosystemAdapter_PanicsOnUnknownLanguage(t *testing.T) {
+	withCleanRegistry(t, func() {
+		assert.PanicsWithValue(t,
+			`RegisterEcosystemAdapter: language "nuget" is not listed in orderedLanguages; `+
+				`a detected-but-unlisted ecosystem would be skipped without a warning `+
+				`and produce a false-clean scan — add it to orderedLanguages first`,
+			func() {
+				RegisterEcosystemAdapter(EcosystemAdapter{
+					Ecosystem:     "NuGet",
+					Language:      "nuget", // not an orderedLanguages value
+					DetectFiles:   []string{"*.csproj"},
+					MaxConfidence: ceilingPackage,
+					ParseLockfile: func(_ string) ([]ResolvedDep, bool, error) { return nil, true, nil },
+				})
+			})
+	})
 }
 
-// TestLaneALanguageKnown_UnknownLanguage verifies that unknown languages
-// return false.
-func TestLaneALanguageKnown_UnknownLanguage(t *testing.T) {
-	assert.False(t, laneALanguageKnown("nuget"),
-		"nuget is not in the setLaneAFlag switch; must return false")
-	assert.False(t, laneALanguageKnown(""),
-		"empty string is not a known language")
-	assert.False(t, laneALanguageKnown("python"),
-		"python is not a Lane-A language (uses the plugin path); must return false")
+// TestRegisterEcosystemAdapter_PanicsOnLockfileSymbolCeiling: lockfile parsing
+// can only establish package presence, never a call-graph proof. An adapter
+// with ParseLockfile set must not be able to stamp SYMBOL_REACHABLE onto
+// findings by declaring a symbol ceiling.
+func TestRegisterEcosystemAdapter_PanicsOnLockfileSymbolCeiling(t *testing.T) {
+	withCleanRegistry(t, func() {
+		assert.PanicsWithValue(t,
+			`RegisterEcosystemAdapter: lockfile-static adapter "dotnet" must declare `+
+				`ceilingPackage; lockfile parsing cannot prove symbol-level reachability`,
+			func() {
+				RegisterEcosystemAdapter(EcosystemAdapter{
+					Ecosystem:     "NuGet",
+					Language:      "dotnet",
+					DetectFiles:   []string{"*.csproj"},
+					MaxConfidence: ceilingSymbol,
+					ParseLockfile: func(_ string) ([]ResolvedDep, bool, error) { return nil, true, nil },
+				})
+			})
+	})
 }

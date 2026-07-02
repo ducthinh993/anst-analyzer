@@ -1,6 +1,6 @@
 package cli
 
-// ecosystem_hex.go — Lane-A lockfile-static adapter for Hex (Elixir/Erlang).
+// ecosystem_hex.go — lockfile-static adapter for Hex (Elixir/Erlang).
 //
 // OSV ecosystem: "Hex" (https://osv.dev/list?ecosystem=Hex)
 // Maximum confidence: PACKAGE_REACHABLE (Hex OSV advisories carry no method-level data).
@@ -51,7 +51,7 @@ import (
 )
 
 func init() {
-	RegisterLaneAAdapter(LaneAAdapter{
+	RegisterEcosystemAdapter(EcosystemAdapter{
 		Ecosystem: advisory.EcosystemHex,
 		Language:  "elixir",
 		// DetectFiles: mix.lock is the Elixir/Mix lockfile (complete transitive closure).
@@ -64,6 +64,7 @@ func init() {
 		// DetectFiles avoids the misleading "detected but incomplete" pattern for projects
 		// that simply haven't committed their lockfile yet.
 		DetectFiles:   []string{"mix.lock", "rebar.lock"},
+		MaxConfidence: ceilingPackage,
 		ParseLockfile: parseHexLockfiles,
 		// NormalizeName is nil: Hex package names are case-sensitive and match
 		// the OSV Hex index exactly (e.g. "jason", "phoenix", "cowboy").
@@ -105,7 +106,7 @@ var mixLockHexEntryRe = regexp.MustCompile(`"([^"]+)"\s*:\s*\{:hex,\s*:[^,]+,\s*
 //   - (deps, true, nil)      → complete closure; all :hex entries have pinned versions.
 //   - (nil, false, err)      → I/O or read error.
 //
-// NEVER returns a partial closure with complete=false (LaneAAdapter invariant):
+// NEVER returns a partial closure with complete=false (EcosystemAdapter invariant):
 // a partial dep list would produce false NOT_REACHABLE for the missing transitive
 // portion, silently dropping real vulnerabilities.
 //
@@ -216,7 +217,7 @@ var rebarLockPkgRe = regexp.MustCompile(`\{<<"([^"]+)">>,\s*\{pkg,\s*<<"[^"]*">>
 //   - (deps, true, nil)      → complete closure; all {pkg,...} entries have versions.
 //   - (nil, false, err)      → I/O or read error.
 //
-// NEVER returns a partial closure with complete=false (LaneAAdapter invariant).
+// NEVER returns a partial closure with complete=false (EcosystemAdapter invariant).
 //
 // Dep-type: all deps are tagged "" (unknown, treated as runtime by mergeDepType).
 // rebar.lock does not encode dep-type. See file header.
@@ -266,7 +267,7 @@ func parseRebarLock(root string) ([]ResolvedDep, bool, error) {
 
 // ── combined lockfile entry point ─────────────────────────────────────────────
 
-// parseHexLockfiles is the LaneAAdapter.ParseLockfile implementation for Elixir/Erlang.
+// parseHexLockfiles is the EcosystemAdapter.ParseLockfile implementation for Elixir/Erlang.
 //
 // It reads whichever of mix.lock and rebar.lock are present, merges the resulting
 // closures, and returns complete=true iff at least one lockfile was successfully parsed.

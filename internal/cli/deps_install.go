@@ -76,7 +76,7 @@ func defaultRunInstallCommand(ctx context.Context, dir, pm string, args []string
 //   - Rust:   `cargo fetch` (materializes the registry cache `cargo metadata`
 //     needs; runs no build scripts).
 //   - Go:     no-op — `go list`/the plugin resolve statically from go.mod/go.sum.
-//   - Lane-A (maven/nuget/php/ruby/elixir/dart/swift): no-op — resolved
+//   - Lockfile-static ecosystems (maven/nuget/php/ruby/elixir/dart/swift): no-op — resolved
 //     statically from the lockfile; no install required.
 //   - Python: no-op (DEFERRED). Installing PyPI sdists executes setup.py / build
 //     backends, a code-execution risk a security scanner must not take by
@@ -88,13 +88,13 @@ func installDependencies(ctx context.Context, eco ecosystems, moduleRoot string,
 		return
 	}
 
-	if eco.hasJS {
+	if eco.active("js") {
 		runInstallPlan(ctx, "js", moduleRoot, selectJSInstall(moduleRoot))
 	}
-	if eco.hasRust {
+	if eco.active("rust") {
 		runInstallPlan(ctx, "rust", moduleRoot, selectRustInstall())
 	}
-	// Go, Lane-A, and Python are intentionally no-ops here (see doc comment).
+	// Go, the lockfile-static ecosystems, and Python are intentionally no-ops here (see doc comment).
 }
 
 // runInstallPlan executes one install plan, emitting an informational line before

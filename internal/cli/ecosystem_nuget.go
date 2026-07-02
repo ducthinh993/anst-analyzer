@@ -1,6 +1,6 @@
 package cli
 
-// ecosystem_nuget.go — Lane-A lockfile-static adapter for NuGet (.NET/C#).
+// ecosystem_nuget.go — lockfile-static adapter for NuGet (.NET/C#).
 //
 // OSV ecosystem: "NuGet" (https://osv.dev/list?ecosystem=NuGet)
 // Maximum confidence: PACKAGE_REACHABLE (NuGet OSV advisories carry no method-level data).
@@ -44,7 +44,7 @@ import (
 )
 
 func init() {
-	RegisterLaneAAdapter(LaneAAdapter{
+	RegisterEcosystemAdapter(EcosystemAdapter{
 		Ecosystem: advisory.EcosystemNuGet,
 		Language:  "dotnet",
 		// DetectFiles: packages.lock.json and packages.config are exact filenames.
@@ -52,6 +52,7 @@ func init() {
 		// hasFileSuffix helper; it detects SDK-style projects that have not opted
 		// into lockfile-based restore.
 		DetectFiles:   []string{"packages.lock.json", "packages.config", "*.csproj"},
+		MaxConfidence: ceilingPackage,
 		ParseLockfile: parseNugetLockfile,
 		// NormalizeName is nil: NuGet package names in OSV records use their published
 		// casing (e.g., "Newtonsoft.Json"). The NuGet registry is case-insensitive but
@@ -60,7 +61,7 @@ func init() {
 	})
 }
 
-// parseNugetLockfile is the LaneAAdapter.ParseLockfile implementation for the
+// parseNugetLockfile is the EcosystemAdapter.ParseLockfile implementation for the
 // NuGet (.NET/C#) ecosystem.
 //
 // It tries four lockfile sources in descending fidelity order:
@@ -69,7 +70,7 @@ func init() {
 //  3. packages.config — legacy explicit list, complete=true.
 //  4. *.csproj — declared deps only, transitives unknown, complete=false.
 //
-// NEVER returns a partial closure with complete=false (LaneAAdapter contract):
+// NEVER returns a partial closure with complete=false (EcosystemAdapter contract):
 // a partial dep list would cause false NOT_REACHABLE for the missing transitive
 // portion, silently dropping real vulnerabilities.
 func parseNugetLockfile(root string) ([]ResolvedDep, bool, error) {

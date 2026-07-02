@@ -14,11 +14,11 @@ import (
 
 // ── adapter registration ──────────────────────────────────────────────────────
 
-// TestRubyGemsAdapterRegistered verifies that the RubyGems Lane-A adapter is
+// TestRubyGemsAdapterRegistered verifies that the RubyGems lockfile-static adapter is
 // registered in the global registry with the expected metadata.
 func TestRubyGemsAdapterRegistered(t *testing.T) {
-	var found *LaneAAdapter
-	for _, a := range LaneAAdapters() {
+	var found *EcosystemAdapter
+	for _, a := range EcosystemAdapters() {
 		if a.Language == "ruby" {
 			a := a
 			found = &a
@@ -41,9 +41,9 @@ func TestDetectEcosystems_GemfileLock(t *testing.T) {
 		[]byte(gemfileLockRailsApp), 0o644))
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasRuby, "Gemfile.lock present → Ruby ecosystem detected")
-	assert.False(t, eco.hasGo, "no go.mod → Go not detected")
-	assert.False(t, eco.hasPhp, "no composer.lock → PHP not detected")
+	assert.True(t, eco.active("ruby"), "Gemfile.lock present → Ruby ecosystem detected")
+	assert.False(t, eco.active("go"), "no go.mod → Go not detected")
+	assert.False(t, eco.active("php"), "no composer.lock → PHP not detected")
 }
 
 // TestDetectEcosystems_GemfileManifestOnly verifies that Gemfile alone triggers
@@ -54,7 +54,7 @@ func TestDetectEcosystems_GemfileManifestOnly(t *testing.T) {
 		[]byte("source 'https://rubygems.org'\ngem 'rails', '~> 7.0'\n"), 0o644))
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasRuby, "Gemfile present → Ruby ecosystem detected (incomplete scan)")
+	assert.True(t, eco.active("ruby"), "Gemfile present → Ruby ecosystem detected (incomplete scan)")
 }
 
 // ── parseGemfileLock ──────────────────────────────────────────────────────────

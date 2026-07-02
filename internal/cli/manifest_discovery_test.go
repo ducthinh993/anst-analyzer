@@ -29,8 +29,8 @@ func touch(t *testing.T, dir, name string) {
 // testAdapters returns two minimal adapters for use in discovery tests:
 // - "php"  → DetectFiles: ["composer.lock", "composer.json"]
 // - "ruby" → DetectFiles: ["Gemfile.lock", "Gemfile"]
-func testAdapters() []LaneAAdapter {
-	return []LaneAAdapter{
+func testAdapters() []EcosystemAdapter {
+	return []EcosystemAdapter{
 		{
 			Language:      "php",
 			DetectFiles:   []string{"composer.lock", "composer.json"},
@@ -45,8 +45,8 @@ func testAdapters() []LaneAAdapter {
 }
 
 // testAdaptersWithGlob returns an adapter that uses a suffix-glob DetectFile.
-func testAdaptersWithGlob() []LaneAAdapter {
-	return []LaneAAdapter{
+func testAdaptersWithGlob() []EcosystemAdapter {
+	return []EcosystemAdapter{
 		{
 			Language:      "dotnet",
 			DetectFiles:   []string{"packages.lock.json", "*.csproj"},
@@ -55,12 +55,12 @@ func testAdaptersWithGlob() []LaneAAdapter {
 	}
 }
 
-// ── discoverLaneAProjectDirs ──────────────────────────────────────────────────
+// ── discoverLockfileProjectDirs ──────────────────────────────────────────────────
 
 // TestDiscover_Empty verifies that an empty directory returns no dirs and no cap.
 func TestDiscover_Empty(t *testing.T) {
 	root := t.TempDir()
-	dirs, capped := discoverLaneAProjectDirs(root, testAdapters())
+	dirs, capped := discoverLockfileProjectDirs(root, testAdapters())
 	assert.False(t, capped)
 	assert.Empty(t, dirs["php"])
 	assert.Empty(t, dirs["ruby"])
@@ -71,7 +71,7 @@ func TestDiscover_RootOnly(t *testing.T) {
 	root := t.TempDir()
 	touch(t, root, "composer.lock")
 
-	dirs, capped := discoverLaneAProjectDirs(root, testAdapters())
+	dirs, capped := discoverLockfileProjectDirs(root, testAdapters())
 	assert.False(t, capped)
 	assert.Equal(t, []string{root}, dirs["php"])
 	assert.Empty(t, dirs["ruby"])
@@ -86,7 +86,7 @@ func TestDiscover_RootAndSubdir(t *testing.T) {
 	subA := mkdirAll(t, root, "services/api")
 	touch(t, subA, "composer.lock") // sub has PHP
 
-	dirs, capped := discoverLaneAProjectDirs(root, testAdapters())
+	dirs, capped := discoverLockfileProjectDirs(root, testAdapters())
 	assert.False(t, capped)
 	assert.Equal(t, []string{root}, dirs["ruby"])
 	assert.Equal(t, []string{subA}, dirs["php"])
@@ -104,7 +104,7 @@ func TestDiscover_MultipleSubdirs(t *testing.T) {
 	touch(t, subB, "composer.lock")
 	touch(t, subC, "composer.lock")
 
-	dirs, capped := discoverLaneAProjectDirs(root, testAdapters())
+	dirs, capped := discoverLockfileProjectDirs(root, testAdapters())
 	assert.False(t, capped)
 	assert.ElementsMatch(t, []string{subA, subB, subC}, dirs["php"])
 }
@@ -117,7 +117,7 @@ func TestDiscover_PolyglotSubdir(t *testing.T) {
 	touch(t, sub, "composer.lock")
 	touch(t, sub, "Gemfile.lock")
 
-	dirs, capped := discoverLaneAProjectDirs(root, testAdapters())
+	dirs, capped := discoverLockfileProjectDirs(root, testAdapters())
 	assert.False(t, capped)
 	assert.Equal(t, []string{sub}, dirs["php"])
 	assert.Equal(t, []string{sub}, dirs["ruby"])
@@ -130,7 +130,7 @@ func TestDiscover_IgnoredDirs_NodeModules(t *testing.T) {
 	evil := mkdirAll(t, root, "node_modules/some-pkg")
 	touch(t, evil, "composer.lock")
 
-	dirs, capped := discoverLaneAProjectDirs(root, testAdapters())
+	dirs, capped := discoverLockfileProjectDirs(root, testAdapters())
 	assert.False(t, capped)
 	assert.Empty(t, dirs["php"], "node_modules must be skipped")
 }
@@ -141,7 +141,7 @@ func TestDiscover_IgnoredDirs_Vendor(t *testing.T) {
 	evil := mkdirAll(t, root, "vendor/github.com/foo")
 	touch(t, evil, "composer.lock")
 
-	dirs, _ := discoverLaneAProjectDirs(root, testAdapters())
+	dirs, _ := discoverLockfileProjectDirs(root, testAdapters())
 	assert.Empty(t, dirs["php"], "vendor must be skipped")
 }
 
@@ -151,7 +151,7 @@ func TestDiscover_IgnoredDirs_Build(t *testing.T) {
 	evil := mkdirAll(t, root, "build/output")
 	touch(t, evil, "Gemfile.lock")
 
-	dirs, _ := discoverLaneAProjectDirs(root, testAdapters())
+	dirs, _ := discoverLockfileProjectDirs(root, testAdapters())
 	assert.Empty(t, dirs["ruby"], "build dir must be skipped")
 }
 
@@ -161,7 +161,7 @@ func TestDiscover_IgnoredDirs_DotPrefix(t *testing.T) {
 	evil := mkdirAll(t, root, ".hidden/sub")
 	touch(t, evil, "composer.lock")
 
-	dirs, _ := discoverLaneAProjectDirs(root, testAdapters())
+	dirs, _ := discoverLockfileProjectDirs(root, testAdapters())
 	assert.Empty(t, dirs["php"], "dot-prefixed dirs must be skipped")
 }
 
@@ -171,7 +171,7 @@ func TestDiscover_IgnoredDirs_Target(t *testing.T) {
 	evil := mkdirAll(t, root, "target/classes")
 	touch(t, evil, "composer.lock")
 
-	dirs, _ := discoverLaneAProjectDirs(root, testAdapters())
+	dirs, _ := discoverLockfileProjectDirs(root, testAdapters())
 	assert.Empty(t, dirs["php"], "target dir must be skipped")
 }
 
@@ -182,7 +182,7 @@ func TestDiscover_IgnoredDirs_CaseInsensitive(t *testing.T) {
 	evil := mkdirAll(t, root, "Vendor/pkg")
 	touch(t, evil, "composer.lock")
 
-	dirs, _ := discoverLaneAProjectDirs(root, testAdapters())
+	dirs, _ := discoverLockfileProjectDirs(root, testAdapters())
 	assert.Empty(t, dirs["php"], "Vendor (capitalised) must be skipped by case-insensitive check")
 }
 
@@ -193,7 +193,7 @@ func TestDiscover_IgnoredDirs_NotDescended(t *testing.T) {
 	evil := mkdirAll(t, root, "node_modules")
 	touch(t, evil, "composer.lock")
 
-	dirs, _ := discoverLaneAProjectDirs(root, testAdapters())
+	dirs, _ := discoverLockfileProjectDirs(root, testAdapters())
 	assert.Empty(t, dirs["php"], "manifest inside node_modules must be skipped")
 }
 
@@ -204,7 +204,7 @@ func TestDiscover_ValidSubdirNotIgnored(t *testing.T) {
 	good := mkdirAll(t, root, "packages/api")
 	touch(t, good, "Gemfile.lock")
 
-	dirs, _ := discoverLaneAProjectDirs(root, testAdapters())
+	dirs, _ := discoverLockfileProjectDirs(root, testAdapters())
 	assert.Equal(t, []string{good}, dirs["ruby"])
 }
 
@@ -224,7 +224,7 @@ func TestDiscover_DepthCap(t *testing.T) {
 	beyondMax := mkdirAll(t, atMax, "toodeep")
 	touch(t, beyondMax, "Gemfile.lock")
 
-	dirs, capped := discoverLaneAProjectDirs(root, testAdapters())
+	dirs, capped := discoverLockfileProjectDirs(root, testAdapters())
 	assert.False(t, capped, "depth cap does not set capped=true, only project cap does")
 	assert.Contains(t, dirs["php"], atMax, "dir at max depth must be discovered")
 	assert.Empty(t, dirs["ruby"], "dir beyond max depth must NOT be discovered")
@@ -242,7 +242,7 @@ func TestDiscover_ProjectDirCap(t *testing.T) {
 		touch(t, sub, "composer.lock")
 	}
 
-	dirs, capped := discoverLaneAProjectDirs(root, testAdapters())
+	dirs, capped := discoverLockfileProjectDirs(root, testAdapters())
 	assert.True(t, capped, "capped must be true when project dir count exceeds cap")
 	// We expect at most discoveryMaxDirs entries across all adapters.
 	assert.LessOrEqual(t, len(dirs["php"]), discoveryMaxDirs,
@@ -256,7 +256,7 @@ func TestDiscover_GlobDetectFile(t *testing.T) {
 	sub := mkdirAll(t, root, "MyProject")
 	touch(t, sub, "MyProject.csproj") // matches "*.csproj" glob
 
-	dirs, capped := discoverLaneAProjectDirs(root, testAdaptersWithGlob())
+	dirs, capped := discoverLockfileProjectDirs(root, testAdaptersWithGlob())
 	assert.False(t, capped)
 	assert.Equal(t, []string{sub}, dirs["dotnet"])
 }
@@ -268,7 +268,7 @@ func TestDiscover_ExactFileNotGlob(t *testing.T) {
 	sub := mkdirAll(t, root, "app")
 	touch(t, sub, "packages.lock.json")
 
-	dirs, capped := discoverLaneAProjectDirs(root, testAdaptersWithGlob())
+	dirs, capped := discoverLockfileProjectDirs(root, testAdaptersWithGlob())
 	assert.False(t, capped)
 	assert.Equal(t, []string{sub}, dirs["dotnet"])
 }
@@ -278,7 +278,7 @@ func TestDiscover_NoAdapters(t *testing.T) {
 	root := t.TempDir()
 	touch(t, root, "composer.lock")
 
-	dirs, capped := discoverLaneAProjectDirs(root, nil)
+	dirs, capped := discoverLockfileProjectDirs(root, nil)
 	assert.False(t, capped)
 	assert.Empty(t, dirs)
 }
@@ -293,7 +293,7 @@ func TestDiscover_IgnoredDirs_AllListed(t *testing.T) {
 			evil := mkdirAll(t, root, name)
 			touch(t, evil, "composer.lock")
 
-			dirs, _ := discoverLaneAProjectDirs(root, adapters)
+			dirs, _ := discoverLockfileProjectDirs(root, adapters)
 			assert.Empty(t, dirs["php"],
 				"manifest inside %q must be skipped by ignore-list", name)
 		})
@@ -306,6 +306,6 @@ func TestDiscover_RootIsAlwaysChecked(t *testing.T) {
 	root := t.TempDir()
 	touch(t, root, "Gemfile.lock")
 
-	dirs, _ := discoverLaneAProjectDirs(root, testAdapters())
+	dirs, _ := discoverLockfileProjectDirs(root, testAdapters())
 	assert.Equal(t, []string{root}, dirs["ruby"])
 }

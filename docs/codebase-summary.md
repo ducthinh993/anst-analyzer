@@ -37,21 +37,25 @@ runs `os.Exit(policy.RunWithRecovery(cli.Run))` so a panic during a scan exits
   every flag, and `runScan`'s end-to-end pipeline: ecosystem detection →
   dependency install → advisory resolution → plugin dispatch → severity/risk
   stamping → render → VEX → policy gate.
-- `ecosystem_registry.go` — the Lane-A adapter registry (`RegisterLaneAAdapter`,
-  keyed by `Language`); panics on a duplicate or unwired registration so a
-  silently-missing ecosystem adapter fails loudly at init time rather than at
-  runtime.
+- `ecosystem_registry.go` — the single `EcosystemAdapter` registry (populated at
+  init via `RegisterEcosystemAdapter`). One entry per supported ecosystem carries
+  its detection files, `--language` value, `MaxConfidence` ceiling, and (for
+  lockfile-static ecosystems) a `ParseLockfile` resolver. It is the one taxonomy
+  for detection, `--language` validation, and advisory resolution — adding a
+  lockfile-static ecosystem is one entry plus a version comparator, with no
+  per-language `switch` to touch.
 - `ecosystem_maven.go`, `ecosystem_nuget.go`, `ecosystem_packagist.go`,
   `ecosystem_rubygems.go`, `ecosystem_hex.go`, `ecosystem_pub.go`,
-  `ecosystem_swift.go` — one Lane-A adapter per lockfile-static ecosystem
-  (Maven/JVM, NuGet/.NET, Packagist/PHP, RubyGems/Ruby, Hex/Elixir, Pub/Dart,
-  SwiftPM/Swift). Each implements `LaneAAdapter{DetectFiles, ParseLockfile,
-  NormalizeName}` and parses only the lockfile — manifests (`pom.xml`,
+  `ecosystem_swift.go` — one lockfile-static adapter per ecosystem (Maven/JVM,
+  NuGet/.NET, Packagist/PHP, RubyGems/Ruby, Hex/Elixir, Pub/Dart, SwiftPM/Swift).
+  Each sets `ParseLockfile` and parses only the lockfile — manifests (`pom.xml`,
   `*.csproj`, `Gemfile`, `mix.exs`, `Package.swift`) are read for
-  direct-dependency hints only and are never executed.
-- Plugin-backed (Lane-B) ecosystems — Go, JS/TS, Rust, Python — are wired
-  through the same `scan.go` orchestrator but dispatch to `internal/host` for
-  reachability rather than through a `LaneAAdapter`.
+  direct-dependency hints only and are never executed. `MaxConfidence` is the
+  package-level ceiling.
+- Plugin-backed ecosystems — Go, JS/TS, Rust, Python — appear in the same
+  registry with `ParseLockfile` nil and a `SYMBOL_REACHABLE` ceiling; the
+  `scan.go` orchestrator dispatches them to `internal/host` for call-graph
+  reachability instead of parsing a lockfile.
 
 ## `internal/advisory/` — advisory intelligence (85 files)
 

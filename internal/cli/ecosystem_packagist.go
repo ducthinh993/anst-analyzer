@@ -1,6 +1,6 @@
 package cli
 
-// ecosystem_packagist.go — Lane-A lockfile-static adapter for Packagist (PHP/Composer).
+// ecosystem_packagist.go — lockfile-static adapter for Packagist (PHP/Composer).
 //
 // OSV ecosystem: "Packagist" (https://osv.dev/list?ecosystem=Packagist)
 // Maximum confidence: PACKAGE_REACHABLE (Packagist OSV advisories carry no method-level data).
@@ -35,7 +35,7 @@ import (
 )
 
 func init() {
-	RegisterLaneAAdapter(LaneAAdapter{
+	RegisterEcosystemAdapter(EcosystemAdapter{
 		Ecosystem: advisory.EcosystemPackagist,
 		Language:  "php",
 		// DetectFiles: composer.lock is the primary lockfile (full static closure).
@@ -43,6 +43,7 @@ func init() {
 		// are still detected, triggering a scan that will return incomplete=true rather
 		// than silently skipping the PHP ecosystem (unknown ≠ safe).
 		DetectFiles:   []string{"composer.lock", "composer.json"},
+		MaxConfidence: ceilingPackage,
 		ParseLockfile: parseComposerLockfile,
 		// NormalizeName is nil: Packagist enforces lowercase package names
 		// (e.g. "vendor/package") and the OSV Packagist index records use the same
@@ -75,7 +76,7 @@ type composerLockPkg struct {
 	Version string `json:"version"`
 }
 
-// parseComposerLockfile is the LaneAAdapter.ParseLockfile implementation for PHP.
+// parseComposerLockfile is the EcosystemAdapter.ParseLockfile implementation for PHP.
 //
 // It reads composer.lock and returns the full resolved dependency closure with
 // authoritative dep-type classification from the lockfile structure.
@@ -86,7 +87,7 @@ type composerLockPkg struct {
 //   - (deps, true, nil)         → closure is complete; all packages have pinned versions.
 //   - (nil, false, err)         → I/O or JSON decode error.
 //
-// NEVER returns a partial closure with complete=false (LaneAAdapter invariant):
+// NEVER returns a partial closure with complete=false (EcosystemAdapter invariant):
 // a partial dep list would cause false NOT_REACHABLE for the missing transitive
 // portion, silently dropping real vulnerabilities.
 func parseComposerLockfile(root string) ([]ResolvedDep, bool, error) {
