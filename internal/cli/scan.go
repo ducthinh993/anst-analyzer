@@ -619,60 +619,34 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 		// sourcesByID records the merged source attribution for each advisory so it
 		// can be stamped onto findings (the Finding carries only an advisory ref, not
 		// the advisory's Sources, so we propagate it here for visible attribution).
-		for _, dep := range deps {
-			pkg := advisory.Package{Ecosystem: advisory.EcosystemGo, Name: dep.Path}
-			advs, queryErr := multiSrc.Query(ctx, pkg, dep.Version)
-
-			// A *SourcesIncompleteError means one or more sources failed for this dep.
-			// Warn + mark incomplete, but still gate on the advisories that succeeded.
-			var srcIncomplete *advisory.SourcesIncompleteError
-			if queryErr != nil && errors.As(queryErr, &srcIncomplete) {
-				for i, name := range srcIncomplete.FailedSources {
-					fmt.Fprintf(os.Stderr, "warning: advisory source %q failed for %s@%s: %v\n",
-						name, dep.Path, dep.Version, srcIncomplete.Errors[i])
-				}
-				incomplete = true
-			} else if queryErr != nil {
-				// A non-StalenessWarning, non-SourcesIncomplete error (e.g. cache corrupt).
-				var staleWarn *advisory.StalenessWarningError
-				if errors.As(queryErr, &staleWarn) {
-					fmt.Fprintf(os.Stderr, "warning: %s\n", staleWarn.Warning)
-					advs = staleWarn.Advisories
-				} else {
-					fmt.Fprintf(os.Stderr, "commit0-analyzer scan: advisory query %s@%s: %v\n",
-						dep.Path, dep.Version, queryErr)
-					incomplete = true
-					continue
-				}
-			}
-
-			// Post-merge enrichment (CWE+KEV default-on; NVD/EPSS opt-in via
-			// --source). A failed enricher warns and degrades but never marks the
-			// scan incomplete — enrichment is prioritization metadata, not coverage.
-			runEnrichment(ctx, goEnrichChain, advs, dep.Path+"@"+dep.Version)
-
-			for i := range advs {
-				// Propagate advisory-level Incomplete signal: an undecidable version
-				// comparison (e.g. unparseable version string) must surface as
-				// incomplete=true so the scan exits 3, not 0 (unknown ≠ safe).
-				if advs[i].Incomplete {
-					incomplete = true
-				}
-				protoAdvs = append(protoAdvs, advs[i].ToProto())
-				if advs[i].ID != "" {
-					sourcesByID[advs[i].ID] = advs[i].Sources
-					advByID[advs[i].ID] = &advs[i]
-					if advs[i].Severity != advisory.SeverityUnspecified {
-						severityByID[advs[i].ID] = advs[i].Severity
-					}
-				}
-				// --skip-reachability-analysis: emit a package-level UNKNOWN finding
-				// instead of running the call-graph plugin (see step 7).
-				if flags.skipReachabilityAnalysis && advs[i].ID != "" {
-					pkgLevelFindings = append(pkgLevelFindings, packageLevelFinding(&advs[i], dep.Path, "go"))
-				}
+		goDeps := make([]advisoryDep, len(deps))
+		for i, dep := range deps {
+			desc := dep.Path + "@" + dep.Version
+			goDeps[i] = advisoryDep{
+				QueryName:       dep.Path,
+				Version:         dep.Version,
+				Module:          dep.Path,
+				SourcesFailDesc: desc,
+				Desc:            desc,
 			}
 		}
+		resolveDepAdvisories(ctx, advisoryResolution{
+			Ecosystem:    advisory.EcosystemGo,
+			Source:       multiSrc,
+			Enrich:       goEnrichChain,
+			ProtoAdvs:    &protoAdvs,
+			SourcesByID:  sourcesByID,
+			AdvByID:      advByID,
+			SeverityByID: severityByID,
+			Incomplete:   &incomplete,
+			// --skip-reachability-analysis: emit a package-level UNKNOWN finding
+			// instead of running the call-graph plugin (see step 7).
+			PerAdvisory: func(dep advisoryDep, adv *advisory.Advisory) {
+				if flags.skipReachabilityAnalysis && adv.ID != "" {
+					pkgLevelFindings = append(pkgLevelFindings, packageLevelFinding(adv, dep.Module, "go"))
+				}
+			},
+		}, goDeps)
 	}
 
 	// ── 5b. npm advisory resolution (JS ecosystem) ───────────────────────────
@@ -790,44 +764,42 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 					symResolver = symbolindex.NewResolver(symIndexDir, ghClient, jsPluginBin, flags.offline)
 				}
 
-				for _, dep := range npmDeps {
+				npmResolveDeps := make([]advisoryDep, len(npmDeps))
+				for i, dep := range npmDeps {
 					// Normalize the npm package name to lowercase to match OSV records.
 					// OSV stores npm package names lowercase; lockfile names may differ.
-					normalizedName := strings.ToLower(dep.Name)
-					pkg := advisory.Package{Ecosystem: advisory.EcosystemNPM, Name: normalizedName}
-					advs, queryErr := npmMultiSrc.Query(ctx, pkg, dep.Version)
-
-					var srcIncomplete *advisory.SourcesIncompleteError
-					if queryErr != nil && errors.As(queryErr, &srcIncomplete) {
-						for i, name := range srcIncomplete.FailedSources {
-							fmt.Fprintf(os.Stderr, "warning: advisory source %q failed for %s@%s (workspace %s): %v\n",
-								name, dep.Name, dep.Version, dep.Workspace, srcIncomplete.Errors[i])
-						}
-						incomplete = true
-					} else if queryErr != nil {
-						var staleWarn *advisory.StalenessWarningError
-						if errors.As(queryErr, &staleWarn) {
-							fmt.Fprintf(os.Stderr, "warning: %s\n", staleWarn.Warning)
-							advs = staleWarn.Advisories
-						} else {
-							fmt.Fprintf(os.Stderr, "commit0-analyzer scan: advisory query %s@%s: %v\n",
-								dep.Name, dep.Version, queryErr)
-							incomplete = true
-							continue
-						}
+					npmResolveDeps[i] = advisoryDep{
+						QueryName:       strings.ToLower(dep.Name),
+						Version:         dep.Version,
+						Module:          dep.Name,
+						SourcesFailDesc: dep.Name + "@" + dep.Version + " (workspace " + dep.Workspace + ")",
+						Desc:            dep.Name + "@" + dep.Version,
 					}
-
-					// Post-merge enrichment (CWE/KEV/NVD/EPSS, all default-on). A failed
-					// enricher warns and degrades but never marks the scan incomplete —
-					// enrichment is prioritization metadata, not vulnerability coverage.
-					runEnrichment(ctx, npmEnrichChain, advs, dep.Name+"@"+dep.Version)
-
-					// Resolve symbols before converting to proto (only when --symbols
-					// is set and the resolver was successfully constructed). Any failure
-					// inside Resolve degrades quietly: the advisory stays at
-					// SymbolLevel=false and the finding remains PACKAGE_REACHABLE.
-					// Never set incomplete=true here — symbol data is precision-only.
-					if symResolver != nil {
+				}
+				npmRes := advisoryResolution{
+					Ecosystem:    advisory.EcosystemNPM,
+					Source:       npmMultiSrc,
+					Enrich:       npmEnrichChain,
+					ProtoAdvs:    &protoAdvs,
+					SourcesByID:  sourcesByID,
+					AdvByID:      advByID,
+					SeverityByID: severityByID,
+					Incomplete:   &incomplete,
+					// --skip-reachability-analysis: emit a package-level UNKNOWN finding
+					// instead of running the call-graph plugin (see step 7).
+					PerAdvisory: func(dep advisoryDep, adv *advisory.Advisory) {
+						if flags.skipReachabilityAnalysis && adv.ID != "" {
+							pkgLevelFindings = append(pkgLevelFindings, packageLevelFinding(adv, dep.Module, "js"))
+						}
+					},
+				}
+				// Resolve symbols before the fold (only when --symbols is set and the
+				// resolver was successfully constructed). Any failure inside Resolve
+				// degrades quietly: the advisory stays at SymbolLevel=false and the
+				// finding remains PACKAGE_REACHABLE. Never marks the scan incomplete —
+				// symbol data is precision-only.
+				if symResolver != nil {
+					npmRes.PostEnrich = func(advs []advisory.Advisory) {
 						for i := range advs {
 							if len(advs[i].FixRefs) == 0 {
 								continue
@@ -839,27 +811,8 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 							}
 						}
 					}
-
-					for i := range advs {
-						// Propagate advisory-level Incomplete (undecidable version) → host incomplete.
-						if advs[i].Incomplete {
-							incomplete = true
-						}
-						protoAdvs = append(protoAdvs, advs[i].ToProto())
-						// --skip-reachability-analysis: emit a package-level UNKNOWN finding
-						// instead of running the call-graph plugin (see step 7).
-						if flags.skipReachabilityAnalysis && advs[i].ID != "" {
-							pkgLevelFindings = append(pkgLevelFindings, packageLevelFinding(&advs[i], dep.Name, "js"))
-						}
-						if advs[i].ID != "" {
-							sourcesByID[advs[i].ID] = advs[i].Sources
-							advByID[advs[i].ID] = &advs[i]
-							if advs[i].Severity != advisory.SeverityUnspecified {
-								severityByID[advs[i].ID] = advs[i].Severity
-							}
-						}
-					}
 				}
+				resolveDepAdvisories(ctx, npmRes, npmResolveDeps)
 			}
 		}
 	}
@@ -962,57 +915,34 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 				cratesMultiSrc := advisory.NewMultiSource(cratesNamedSources...)
 				cratesEnrichChain := buildEnrichmentChain(cacheDir, flags.offline, selectedSources)
 
-				for _, dep := range cargoDeps {
-					pkg := advisory.Package{Ecosystem: advisory.EcosystemCratesIO, Name: dep.Name}
-					advs, queryErr := cratesMultiSrc.Query(ctx, pkg, dep.Version)
-
-					var srcIncomplete *advisory.SourcesIncompleteError
-					if queryErr != nil && errors.As(queryErr, &srcIncomplete) {
-						for i, name := range srcIncomplete.FailedSources {
-							fmt.Fprintf(os.Stderr,
-								"warning: advisory source %q failed for crate %s@%s: %v\n",
-								name, dep.Name, dep.Version, srcIncomplete.Errors[i])
-						}
-						incomplete = true
-					} else if queryErr != nil {
-						var staleWarn *advisory.StalenessWarningError
-						if errors.As(queryErr, &staleWarn) {
-							fmt.Fprintf(os.Stderr, "warning: %s\n", staleWarn.Warning)
-							advs = staleWarn.Advisories
-						} else {
-							fmt.Fprintf(os.Stderr,
-								"commit0-analyzer scan: advisory query crate %s@%s: %v\n",
-								dep.Name, dep.Version, queryErr)
-							incomplete = true
-							continue
-						}
-					}
-
-					// Post-merge enrichment (CWE/KEV/NVD/EPSS, all default-on). A failed
-					// enricher warns and degrades but never marks the scan incomplete —
-					// enrichment is prioritization metadata, not vulnerability coverage.
-					runEnrichment(ctx, cratesEnrichChain, advs, "crate "+dep.Name+"@"+dep.Version)
-
-					for i := range advs {
-						// Propagate advisory-level Incomplete (undecidable version) → host incomplete.
-						if advs[i].Incomplete {
-							incomplete = true
-						}
-						protoAdvs = append(protoAdvs, advs[i].ToProto())
-						// --skip-reachability-analysis: emit a package-level UNKNOWN finding
-						// instead of running the call-graph plugin (see step 7).
-						if flags.skipReachabilityAnalysis && advs[i].ID != "" {
-							pkgLevelFindings = append(pkgLevelFindings, packageLevelFinding(&advs[i], dep.Name, "rust"))
-						}
-						if advs[i].ID != "" {
-							sourcesByID[advs[i].ID] = advs[i].Sources
-							advByID[advs[i].ID] = &advs[i]
-							if advs[i].Severity != advisory.SeverityUnspecified {
-								severityByID[advs[i].ID] = advs[i].Severity
-							}
-						}
+				cratesResolveDeps := make([]advisoryDep, len(cargoDeps))
+				for i, dep := range cargoDeps {
+					desc := "crate " + dep.Name + "@" + dep.Version
+					cratesResolveDeps[i] = advisoryDep{
+						QueryName:       dep.Name,
+						Version:         dep.Version,
+						Module:          dep.Name,
+						SourcesFailDesc: desc,
+						Desc:            desc,
 					}
 				}
+				resolveDepAdvisories(ctx, advisoryResolution{
+					Ecosystem:    advisory.EcosystemCratesIO,
+					Source:       cratesMultiSrc,
+					Enrich:       cratesEnrichChain,
+					ProtoAdvs:    &protoAdvs,
+					SourcesByID:  sourcesByID,
+					AdvByID:      advByID,
+					SeverityByID: severityByID,
+					Incomplete:   &incomplete,
+					// --skip-reachability-analysis: emit a package-level UNKNOWN finding
+					// instead of running the call-graph plugin (see step 7).
+					PerAdvisory: func(dep advisoryDep, adv *advisory.Advisory) {
+						if flags.skipReachabilityAnalysis && adv.ID != "" {
+							pkgLevelFindings = append(pkgLevelFindings, packageLevelFinding(adv, dep.Module, "rust"))
+						}
+					},
+				}, cratesResolveDeps)
 			}
 		}
 	}
@@ -1119,62 +1049,39 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 				pypiMultiSrc := advisory.NewMultiSource(pypiNamedSources...)
 				pypiEnrichChain := buildEnrichmentChain(cacheDir, flags.offline, selectedSources)
 
-				for _, dep := range pythonDeps {
+				pypiResolveDeps := make([]advisoryDep, len(pythonDeps))
+				for i, dep := range pythonDeps {
 					// Normalize the PyPI package name to lowercase to match OSV records.
-					normalizedName := strings.ToLower(dep.Name)
-					pkg := advisory.Package{Ecosystem: advisory.EcosystemPyPI, Name: normalizedName}
-					advs, queryErr := pypiMultiSrc.Query(ctx, pkg, dep.Version)
-
-					var srcIncomplete *advisory.SourcesIncompleteError
-					if queryErr != nil && errors.As(queryErr, &srcIncomplete) {
-						for i, name := range srcIncomplete.FailedSources {
-							fmt.Fprintf(os.Stderr,
-								"warning: advisory source %q failed for python pkg %s@%s: %v\n",
-								name, dep.Name, dep.Version, srcIncomplete.Errors[i])
-						}
-						incomplete = true
-					} else if queryErr != nil {
-						var staleWarn *advisory.StalenessWarningError
-						if errors.As(queryErr, &staleWarn) {
-							fmt.Fprintf(os.Stderr, "warning: %s\n", staleWarn.Warning)
-							advs = staleWarn.Advisories
-						} else {
-							fmt.Fprintf(os.Stderr,
-								"commit0-analyzer scan: advisory query python pkg %s@%s: %v\n",
-								dep.Name, dep.Version, queryErr)
-							incomplete = true
-							continue
-						}
-					}
-
-					// Post-merge enrichment (CWE/KEV/NVD/EPSS, all default-on). A failed
-					// enricher warns and degrades but never marks the scan incomplete —
-					// enrichment is prioritization metadata, not vulnerability coverage.
-					runEnrichment(ctx, pypiEnrichChain, advs, "python pkg "+dep.Name+"@"+dep.Version)
-
-					for i := range advs {
-						// Propagate advisory-level Incomplete (undecidable version) → host incomplete.
-						if advs[i].Incomplete {
-							incomplete = true
-						}
-						protoAdvs = append(protoAdvs, advs[i].ToProto())
-						// --skip-reachability-analysis: emit a package-level UNKNOWN finding
-						// instead of running the call-graph plugin (see step 7).
-						if flags.skipReachabilityAnalysis && advs[i].ID != "" {
-							pkgLevelFindings = append(pkgLevelFindings, packageLevelFinding(&advs[i], dep.Name, "python"))
-						}
-						if advs[i].ID != "" {
-							sourcesByID[advs[i].ID] = advs[i].Sources
-							advByID[advs[i].ID] = &advs[i]
-							if advs[i].Severity != advisory.SeverityUnspecified {
-								severityByID[advs[i].ID] = advs[i].Severity
-							}
-							// Tag advisory with dep's classification for the gate.
-							// Conservative: "runtime" wins; empty dep-type is runtime (unknown ≠ safe).
-							mergeDepType(depTypeByAdvID, advs[i].ID, dep.DepType)
-						}
+					desc := "python pkg " + dep.Name + "@" + dep.Version
+					pypiResolveDeps[i] = advisoryDep{
+						QueryName:       strings.ToLower(dep.Name),
+						Version:         dep.Version,
+						Module:          dep.Name,
+						DepType:         dep.DepType,
+						SourcesFailDesc: desc,
+						Desc:            desc,
 					}
 				}
+				resolveDepAdvisories(ctx, advisoryResolution{
+					Ecosystem:    advisory.EcosystemPyPI,
+					Source:       pypiMultiSrc,
+					Enrich:       pypiEnrichChain,
+					ProtoAdvs:    &protoAdvs,
+					SourcesByID:  sourcesByID,
+					AdvByID:      advByID,
+					SeverityByID: severityByID,
+					// Tag advisory with dep's classification for the gate.
+					// Conservative: "runtime" wins; empty dep-type is runtime (unknown ≠ safe).
+					DepTypeByAdv: depTypeByAdvID,
+					Incomplete:   &incomplete,
+					// --skip-reachability-analysis: emit a package-level UNKNOWN finding
+					// instead of running the call-graph plugin (see step 7).
+					PerAdvisory: func(dep advisoryDep, adv *advisory.Advisory) {
+						if flags.skipReachabilityAnalysis && adv.ID != "" {
+							pkgLevelFindings = append(pkgLevelFindings, packageLevelFinding(adv, dep.Module, "python"))
+						}
+					},
+				}, pypiResolveDeps)
 			}
 		}
 	}
@@ -1350,7 +1257,8 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 				laneAMultiSrc := advisory.NewMultiSource(laneANamedSources...)
 				laneAEnrichChain := buildEnrichmentChain(cacheDir, flags.offline, selectedSources)
 
-				for _, dep := range deps {
+				laneAResolveDeps := make([]advisoryDep, len(deps))
+				for i, dep := range deps {
 					// Apply adapter-specific name normalization.
 					// Default (NormalizeName==nil) is identity: Maven coordinates are
 					// case-sensitive and OSV records preserve their case; do NOT lowercase.
@@ -1359,75 +1267,51 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 					if laneAAdapter.NormalizeName != nil {
 						normalizedName = laneAAdapter.NormalizeName(normalizedName)
 					}
-					pkg := advisory.Package{Ecosystem: laneAAdapter.Ecosystem, Name: normalizedName}
-					advs, queryErr := laneAMultiSrc.Query(ctx, pkg, dep.Version)
-
-					var srcIncomplete *advisory.SourcesIncompleteError
-					if queryErr != nil && errors.As(queryErr, &srcIncomplete) {
-						for i, name := range srcIncomplete.FailedSources {
-							fmt.Fprintf(os.Stderr,
-								"warning: advisory source %q failed for %s pkg %s@%s: %v\n",
-								name, laneAAdapter.Language, dep.Name, dep.Version, srcIncomplete.Errors[i])
-						}
-						incomplete = true
-					} else if queryErr != nil {
-						var staleWarn *advisory.StalenessWarningError
-						if errors.As(queryErr, &staleWarn) {
-							fmt.Fprintf(os.Stderr, "warning: %s\n", staleWarn.Warning)
-							advs = staleWarn.Advisories
-						} else {
-							fmt.Fprintf(os.Stderr,
-								"commit0-analyzer scan: advisory query %s pkg %s@%s: %v\n",
-								laneAAdapter.Language, dep.Name, dep.Version, queryErr)
-							incomplete = true
-							continue
-						}
+					desc := laneAAdapter.Language + " pkg " + dep.Name + "@" + dep.Version
+					laneAResolveDeps[i] = advisoryDep{
+						QueryName:       normalizedName,
+						Version:         dep.Version,
+						Module:          dep.Name,
+						DepType:         dep.DepType,
+						SourcesFailDesc: desc,
+						Desc:            desc,
 					}
-
-					// Post-merge enrichment (CWE/KEV/NVD/EPSS, all default-on). A failed
-					// enricher warns and degrades but never marks the scan incomplete —
-					// enrichment is prioritization metadata, not vulnerability coverage.
-					runEnrichment(ctx, laneAEnrichChain, advs, laneAAdapter.Language+" pkg "+dep.Name+"@"+dep.Version)
-
-					for i := range advs {
-						// Propagate advisory-level Incomplete (undecidable version) → host incomplete.
-						if advs[i].Incomplete {
-							incomplete = true
-						}
-						protoAdvs = append(protoAdvs, advs[i].ToProto())
-						if advs[i].ID != "" {
-							sourcesByID[advs[i].ID] = advs[i].Sources
-							advByID[advs[i].ID] = &advs[i]
-							if advs[i].Severity != advisory.SeverityUnspecified {
-								severityByID[advs[i].ID] = advs[i].Severity
-							}
-							// Dep-type segmentation for the gate (same semantics as Python path):
-							// "runtime" wins; empty dep-type is treated as runtime (unknown ≠ safe).
-							mergeDepType(depTypeByAdvID, advs[i].ID, dep.DepType)
-						}
-
-						// Generate a Lane-A finding directly from the advisory match.
-						// No reachability plugin exists for these ecosystems; the host converts
-						// OSV advisory matches into PACKAGE_REACHABLE findings.
-						// Undecidable matches become CONFIDENCE_UNKNOWN + Incomplete=true so
-						// the policy gate correctly exits 3 rather than silently passing clean.
+				}
+				resolveDepAdvisories(ctx, advisoryResolution{
+					Ecosystem:    laneAAdapter.Ecosystem,
+					Source:       laneAMultiSrc,
+					Enrich:       laneAEnrichChain,
+					ProtoAdvs:    &protoAdvs,
+					SourcesByID:  sourcesByID,
+					AdvByID:      advByID,
+					SeverityByID: severityByID,
+					// Dep-type segmentation for the gate (same semantics as Python path):
+					// "runtime" wins; empty dep-type is treated as runtime (unknown ≠ safe).
+					DepTypeByAdv: depTypeByAdvID,
+					Incomplete:   &incomplete,
+					// Generate a Lane-A finding directly from the advisory match.
+					// No reachability plugin exists for these ecosystems; the host converts
+					// OSV advisory matches into PACKAGE_REACHABLE findings.
+					// Undecidable matches become CONFIDENCE_UNKNOWN + Incomplete=true so
+					// the policy gate correctly exits 3 rather than silently passing clean.
+					PerAdvisory: func(dep advisoryDep, adv *advisory.Advisory) {
 						laneAConf := commit0v1.Confidence_CONFIDENCE_PACKAGE_REACHABLE
-						if advs[i].Incomplete {
+						if adv.Incomplete {
 							laneAConf = commit0v1.Confidence_CONFIDENCE_UNKNOWN
 						}
 						laneAFindings = append(laneAFindings, &commit0v1.Finding{
 							Advisory: &commit0v1.AdvisoryRef{
-								Id:      advs[i].ID,
-								Aliases: append([]string(nil), advs[i].Aliases...),
+								Id:      adv.ID,
+								Aliases: append([]string(nil), adv.Aliases...),
 							},
-							Module:     dep.Name,
+							Module:     dep.Module,
 							Confidence: laneAConf,
-							Incomplete: advs[i].Incomplete,
+							Incomplete: adv.Incomplete,
 							Pillar:     "sca",
 							Language:   laneAAdapter.Language,
 						})
-					}
-				}
+					},
+				}, laneAResolveDeps)
 			}
 		}
 	}
