@@ -57,7 +57,7 @@ import (
 )
 
 func init() {
-	RegisterLaneAAdapter(LaneAAdapter{
+	RegisterEcosystemAdapter(EcosystemAdapter{
 		Ecosystem: advisory.EcosystemPub,
 		Language:  "dart",
 		// DetectFiles: pubspec.lock is the primary lockfile (complete static closure).
@@ -67,6 +67,7 @@ func init() {
 		// (unknown ≠ safe). pubspec.yaml is intentionally NEVER parsed as a
 		// resolution source (see ACE-safety notes in the file header).
 		DetectFiles:   []string{"pubspec.lock", "pubspec.yaml"},
+		MaxConfidence: ceilingPackage,
 		ParseLockfile: parsePubspecLock,
 		// NormalizeName is nil: Pub package names on pub.dev are lowercase and
 		// case-sensitive. The OSV Pub index records use the same canonical form
@@ -122,7 +123,7 @@ type pubspecLockPkg struct {
 
 // ── parsePubspecLock ──────────────────────────────────────────────────────────
 
-// parsePubspecLock is the LaneAAdapter.ParseLockfile implementation for Dart/Flutter.
+// parsePubspecLock is the EcosystemAdapter.ParseLockfile implementation for Dart/Flutter.
 //
 // It reads pubspec.lock (YAML) and returns the fully-resolved dependency closure.
 // Only "hosted" source packages are included; "git", "path", and "sdk" packages
@@ -142,7 +143,7 @@ type pubspecLockPkg struct {
 //     pinned versions. An empty closure (project has no hosted deps) is valid.
 //   - (nil, false, err)     → I/O or YAML decode error; caller marks scan incomplete.
 //
-// NEVER returns a partial closure with complete=false (LaneAAdapter invariant):
+// NEVER returns a partial closure with complete=false (EcosystemAdapter invariant):
 // a partial dep list would produce false NOT_REACHABLE for the missing portion,
 // silently dropping real vulnerabilities.
 func parsePubspecLock(root string) ([]ResolvedDep, bool, error) {

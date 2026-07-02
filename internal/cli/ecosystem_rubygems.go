@@ -55,7 +55,7 @@ import (
 )
 
 func init() {
-	RegisterLaneAAdapter(LaneAAdapter{
+	RegisterEcosystemAdapter(EcosystemAdapter{
 		Ecosystem: advisory.EcosystemRubyGems,
 		Language:  "ruby",
 		// DetectFiles: Gemfile.lock is the primary lockfile (full static closure).
@@ -63,6 +63,7 @@ func init() {
 		// are still detected, triggering a scan that will return incomplete=true
 		// rather than silently skipping the Ruby ecosystem (unknown ≠ safe).
 		DetectFiles:   []string{"Gemfile.lock", "Gemfile"},
+		MaxConfidence: ceilingPackage,
 		ParseLockfile: parseGemfileLock,
 		// NormalizeName is nil: RubyGems package names are case-sensitive and
 		// are stored in the OSV index with the canonical casing from rubygems.org.
@@ -88,7 +89,7 @@ func init() {
 // names: alphanumeric, underscores, hyphens, and dots (e.g. "net-http", "google-protobuf").
 var gemSpecRe = regexp.MustCompile(`^    ([a-zA-Z0-9][a-zA-Z0-9._-]*) \(([^)]+)\)$`)
 
-// parseGemfileLock is the LaneAAdapter.ParseLockfile implementation for Ruby.
+// parseGemfileLock is the EcosystemAdapter.ParseLockfile implementation for Ruby.
 //
 // It reads Gemfile.lock and returns the full resolved dependency closure from
 // the GEM/specs section. All deps are tagged "runtime" because Gemfile.lock's
@@ -101,7 +102,7 @@ var gemSpecRe = regexp.MustCompile(`^    ([a-zA-Z0-9][a-zA-Z0-9._-]*) \(([^)]+)\
 //   - (deps, true, nil)         → closure is complete; all packages have pinned versions.
 //   - (nil, false, err)         → I/O or parse error.
 //
-// NEVER returns a partial closure with complete=false (LaneAAdapter invariant):
+// NEVER returns a partial closure with complete=false (EcosystemAdapter invariant):
 // a partial dep list would cause false NOT_REACHABLE for the missing transitive
 // portion, silently dropping real vulnerabilities.
 func parseGemfileLock(root string) ([]ResolvedDep, bool, error) {

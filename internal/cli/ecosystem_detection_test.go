@@ -27,11 +27,11 @@ func TestDetectEcosystems_GoModOnly(t *testing.T) {
 	writeFixtureFile(t, dir, "go.mod")
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasGo, "go.mod present → Go ecosystem selected")
-	assert.False(t, eco.hasJS, "no package.json → JS ecosystem not selected")
-	assert.False(t, eco.hasRust, "no Cargo.toml → Rust ecosystem not selected")
-	assert.False(t, eco.hasPython, "no pyproject.toml/requirements.txt → Python not selected")
-	assert.False(t, eco.hasJava, "no pom.xml/build.gradle → Java not selected")
+	assert.True(t, eco.active("go"), "go.mod present → Go ecosystem selected")
+	assert.False(t, eco.active("js"), "no package.json → JS ecosystem not selected")
+	assert.False(t, eco.active("rust"), "no Cargo.toml → Rust ecosystem not selected")
+	assert.False(t, eco.active("python"), "no pyproject.toml/requirements.txt → Python not selected")
+	assert.False(t, eco.active("java"), "no pom.xml/build.gradle → Java not selected")
 }
 
 // TestDetectEcosystems_PackageJSONOnly verifies that a directory containing
@@ -41,11 +41,11 @@ func TestDetectEcosystems_PackageJSONOnly(t *testing.T) {
 	writeFixtureFile(t, dir, "package.json")
 
 	eco := detectEcosystems(dir)
-	assert.False(t, eco.hasGo, "no go.mod → Go ecosystem not selected")
-	assert.True(t, eco.hasJS, "package.json present → JS ecosystem selected")
-	assert.False(t, eco.hasRust, "no Cargo.toml → Rust ecosystem not selected")
-	assert.False(t, eco.hasPython, "no pyproject.toml/requirements.txt → Python not selected")
-	assert.False(t, eco.hasJava, "no pom.xml/build.gradle → Java not selected")
+	assert.False(t, eco.active("go"), "no go.mod → Go ecosystem not selected")
+	assert.True(t, eco.active("js"), "package.json present → JS ecosystem selected")
+	assert.False(t, eco.active("rust"), "no Cargo.toml → Rust ecosystem not selected")
+	assert.False(t, eco.active("python"), "no pyproject.toml/requirements.txt → Python not selected")
+	assert.False(t, eco.active("java"), "no pom.xml/build.gradle → Java not selected")
 }
 
 // TestDetectEcosystems_BothFiles verifies that a polyglot repo with both
@@ -56,8 +56,8 @@ func TestDetectEcosystems_BothFiles(t *testing.T) {
 	writeFixtureFile(t, dir, "package.json")
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasGo, "go.mod present → Go ecosystem selected")
-	assert.True(t, eco.hasJS, "package.json present → JS ecosystem selected")
+	assert.True(t, eco.active("go"), "go.mod present → Go ecosystem selected")
+	assert.True(t, eco.active("js"), "package.json present → JS ecosystem selected")
 }
 
 // TestDetectEcosystems_NeitherFile verifies that an empty directory selects
@@ -66,11 +66,11 @@ func TestDetectEcosystems_NeitherFile(t *testing.T) {
 	dir := t.TempDir()
 
 	eco := detectEcosystems(dir)
-	assert.False(t, eco.hasGo, "no go.mod → Go ecosystem not selected")
-	assert.False(t, eco.hasJS, "no package.json → JS ecosystem not selected")
-	assert.False(t, eco.hasRust, "no Cargo.toml → Rust not selected")
-	assert.False(t, eco.hasPython, "no pyproject.toml/requirements.txt → Python not selected")
-	assert.False(t, eco.hasJava, "no pom.xml/build.gradle → Java not selected")
+	assert.False(t, eco.active("go"), "no go.mod → Go ecosystem not selected")
+	assert.False(t, eco.active("js"), "no package.json → JS ecosystem not selected")
+	assert.False(t, eco.active("rust"), "no Cargo.toml → Rust not selected")
+	assert.False(t, eco.active("python"), "no pyproject.toml/requirements.txt → Python not selected")
+	assert.False(t, eco.active("java"), "no pom.xml/build.gradle → Java not selected")
 }
 
 // TestDetectEcosystems_CargoTOMLOnly verifies that Cargo.toml selects the
@@ -80,11 +80,11 @@ func TestDetectEcosystems_CargoTOMLOnly(t *testing.T) {
 	writeFixtureFile(t, dir, "Cargo.toml")
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasRust, "Cargo.toml present → Rust ecosystem selected")
-	assert.False(t, eco.hasGo, "no go.mod → Go not selected")
-	assert.False(t, eco.hasJS, "no package.json → JS not selected")
-	assert.False(t, eco.hasPython, "no Python manifest → Python not selected")
-	assert.False(t, eco.hasJava, "no Java manifest → Java not selected")
+	assert.True(t, eco.active("rust"), "Cargo.toml present → Rust ecosystem selected")
+	assert.False(t, eco.active("go"), "no go.mod → Go not selected")
+	assert.False(t, eco.active("js"), "no package.json → JS not selected")
+	assert.False(t, eco.active("python"), "no Python manifest → Python not selected")
+	assert.False(t, eco.active("java"), "no Java manifest → Java not selected")
 }
 
 // TestDetectEcosystems_PyprojectOnly verifies that pyproject.toml selects the
@@ -94,11 +94,11 @@ func TestDetectEcosystems_PyprojectOnly(t *testing.T) {
 	writeFixtureFile(t, dir, "pyproject.toml")
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasPython, "pyproject.toml present → Python ecosystem selected")
-	assert.False(t, eco.hasGo, "no go.mod → Go not selected")
-	assert.False(t, eco.hasJS, "no package.json → JS not selected")
-	assert.False(t, eco.hasRust, "no Cargo.toml → Rust not selected")
-	assert.False(t, eco.hasJava, "no Java manifest → Java not selected")
+	assert.True(t, eco.active("python"), "pyproject.toml present → Python ecosystem selected")
+	assert.False(t, eco.active("go"), "no go.mod → Go not selected")
+	assert.False(t, eco.active("js"), "no package.json → JS not selected")
+	assert.False(t, eco.active("rust"), "no Cargo.toml → Rust not selected")
+	assert.False(t, eco.active("java"), "no Java manifest → Java not selected")
 }
 
 // TestDetectEcosystems_RequirementsTxtOnly verifies that requirements.txt
@@ -108,11 +108,11 @@ func TestDetectEcosystems_RequirementsTxtOnly(t *testing.T) {
 	writeFixtureFile(t, dir, "requirements.txt")
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasPython, "requirements.txt present → Python ecosystem selected")
-	assert.False(t, eco.hasGo, "no go.mod → Go not selected")
-	assert.False(t, eco.hasJS, "no package.json → JS not selected")
-	assert.False(t, eco.hasRust, "no Cargo.toml → Rust not selected")
-	assert.False(t, eco.hasJava, "no Java manifest → Java not selected")
+	assert.True(t, eco.active("python"), "requirements.txt present → Python ecosystem selected")
+	assert.False(t, eco.active("go"), "no go.mod → Go not selected")
+	assert.False(t, eco.active("js"), "no package.json → JS not selected")
+	assert.False(t, eco.active("rust"), "no Cargo.toml → Rust not selected")
+	assert.False(t, eco.active("java"), "no Java manifest → Java not selected")
 }
 
 // TestDetectEcosystems_PomXMLOnly verifies that pom.xml selects the Java
@@ -122,11 +122,11 @@ func TestDetectEcosystems_PomXMLOnly(t *testing.T) {
 	writeFixtureFile(t, dir, "pom.xml")
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasJava, "pom.xml present → Java ecosystem selected")
-	assert.False(t, eco.hasGo, "no go.mod → Go not selected")
-	assert.False(t, eco.hasJS, "no package.json → JS not selected")
-	assert.False(t, eco.hasRust, "no Cargo.toml → Rust not selected")
-	assert.False(t, eco.hasPython, "no Python manifest → Python not selected")
+	assert.True(t, eco.active("java"), "pom.xml present → Java ecosystem selected")
+	assert.False(t, eco.active("go"), "no go.mod → Go not selected")
+	assert.False(t, eco.active("js"), "no package.json → JS not selected")
+	assert.False(t, eco.active("rust"), "no Cargo.toml → Rust not selected")
+	assert.False(t, eco.active("python"), "no Python manifest → Python not selected")
 }
 
 // TestDetectEcosystems_BuildGradle verifies that build.gradle selects the
@@ -136,7 +136,7 @@ func TestDetectEcosystems_BuildGradle(t *testing.T) {
 	writeFixtureFile(t, dir, "build.gradle")
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasJava, "build.gradle present → Java ecosystem selected")
+	assert.True(t, eco.active("java"), "build.gradle present → Java ecosystem selected")
 }
 
 // TestDetectEcosystems_BuildGradleKts verifies that build.gradle.kts selects
@@ -146,7 +146,7 @@ func TestDetectEcosystems_BuildGradleKts(t *testing.T) {
 	writeFixtureFile(t, dir, "build.gradle.kts")
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasJava, "build.gradle.kts present → Java ecosystem selected")
+	assert.True(t, eco.active("java"), "build.gradle.kts present → Java ecosystem selected")
 }
 
 // TestDetectEcosystems_AllFiveEcosystems verifies that a polyglot repo with
@@ -161,11 +161,11 @@ func TestDetectEcosystems_AllFiveEcosystems(t *testing.T) {
 	writeFixtureFile(t, dir, "pom.xml")
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasGo, "go.mod → Go")
-	assert.True(t, eco.hasJS, "package.json → JS")
-	assert.True(t, eco.hasRust, "Cargo.toml → Rust")
-	assert.True(t, eco.hasPython, "pyproject.toml → Python")
-	assert.True(t, eco.hasJava, "pom.xml → Java")
+	assert.True(t, eco.active("go"), "go.mod → Go")
+	assert.True(t, eco.active("js"), "package.json → JS")
+	assert.True(t, eco.active("rust"), "Cargo.toml → Rust")
+	assert.True(t, eco.active("python"), "pyproject.toml → Python")
+	assert.True(t, eco.active("java"), "pom.xml → Java")
 }
 
 // ── resolveLanguage ───────────────────────────────────────────────────────────
@@ -179,11 +179,11 @@ func TestResolveLanguage_Auto_GoOnly(t *testing.T) {
 	eco := detectEcosystems(dir)
 	resolved, err := resolveLanguage("auto", eco)
 	require.NoError(t, err)
-	assert.True(t, resolved.hasGo)
-	assert.False(t, resolved.hasJS)
-	assert.False(t, resolved.hasRust)
-	assert.False(t, resolved.hasPython)
-	assert.False(t, resolved.hasJava)
+	assert.True(t, resolved.active("go"))
+	assert.False(t, resolved.active("js"))
+	assert.False(t, resolved.active("rust"))
+	assert.False(t, resolved.active("python"))
+	assert.False(t, resolved.active("java"))
 }
 
 // TestResolveLanguage_Auto_JSOnly verifies that --language auto on a JS-only
@@ -195,8 +195,8 @@ func TestResolveLanguage_Auto_JSOnly(t *testing.T) {
 	eco := detectEcosystems(dir)
 	resolved, err := resolveLanguage("auto", eco)
 	require.NoError(t, err)
-	assert.False(t, resolved.hasGo)
-	assert.True(t, resolved.hasJS)
+	assert.False(t, resolved.active("go"))
+	assert.True(t, resolved.active("js"))
 }
 
 // TestResolveLanguage_Auto_Both verifies that --language auto on a polyglot
@@ -209,8 +209,8 @@ func TestResolveLanguage_Auto_Both(t *testing.T) {
 	eco := detectEcosystems(dir)
 	resolved, err := resolveLanguage("auto", eco)
 	require.NoError(t, err)
-	assert.True(t, resolved.hasGo)
-	assert.True(t, resolved.hasJS)
+	assert.True(t, resolved.active("go"))
+	assert.True(t, resolved.active("js"))
 }
 
 // TestResolveLanguage_Auto_AllFive verifies that --language auto (the default)
@@ -228,11 +228,11 @@ func TestResolveLanguage_Auto_AllFive(t *testing.T) {
 	eco := detectEcosystems(dir)
 	resolved, err := resolveLanguage("auto", eco)
 	require.NoError(t, err)
-	assert.True(t, resolved.hasGo, "auto must include Go")
-	assert.True(t, resolved.hasJS, "auto must include JS")
-	assert.True(t, resolved.hasRust, "auto must include Rust")
-	assert.True(t, resolved.hasPython, "auto must include Python")
-	assert.True(t, resolved.hasJava, "auto must include Java")
+	assert.True(t, resolved.active("go"), "auto must include Go")
+	assert.True(t, resolved.active("js"), "auto must include JS")
+	assert.True(t, resolved.active("rust"), "auto must include Rust")
+	assert.True(t, resolved.active("python"), "auto must include Python")
+	assert.True(t, resolved.active("java"), "auto must include Java")
 }
 
 // TestResolveLanguage_GoOverride forces Go even when package.json is present.
@@ -244,11 +244,11 @@ func TestResolveLanguage_GoOverride(t *testing.T) {
 	eco := detectEcosystems(dir)
 	resolved, err := resolveLanguage("go", eco)
 	require.NoError(t, err)
-	assert.True(t, resolved.hasGo)
-	assert.False(t, resolved.hasJS)
-	assert.False(t, resolved.hasRust)
-	assert.False(t, resolved.hasPython)
-	assert.False(t, resolved.hasJava)
+	assert.True(t, resolved.active("go"))
+	assert.False(t, resolved.active("js"))
+	assert.False(t, resolved.active("rust"))
+	assert.False(t, resolved.active("python"))
+	assert.False(t, resolved.active("java"))
 }
 
 // TestResolveLanguage_JSOverride forces JS even when go.mod is present.
@@ -260,11 +260,11 @@ func TestResolveLanguage_JSOverride(t *testing.T) {
 	eco := detectEcosystems(dir)
 	resolved, err := resolveLanguage("js", eco)
 	require.NoError(t, err)
-	assert.False(t, resolved.hasGo)
-	assert.True(t, resolved.hasJS)
-	assert.False(t, resolved.hasRust)
-	assert.False(t, resolved.hasPython)
-	assert.False(t, resolved.hasJava)
+	assert.False(t, resolved.active("go"))
+	assert.True(t, resolved.active("js"))
+	assert.False(t, resolved.active("rust"))
+	assert.False(t, resolved.active("python"))
+	assert.False(t, resolved.active("java"))
 }
 
 // TestResolveLanguage_RustOverride forces Rust even when other manifests are
@@ -278,11 +278,11 @@ func TestResolveLanguage_RustOverride(t *testing.T) {
 	eco := detectEcosystems(dir)
 	resolved, err := resolveLanguage("rust", eco)
 	require.NoError(t, err)
-	assert.False(t, resolved.hasGo)
-	assert.False(t, resolved.hasJS)
-	assert.True(t, resolved.hasRust)
-	assert.False(t, resolved.hasPython)
-	assert.False(t, resolved.hasJava)
+	assert.False(t, resolved.active("go"))
+	assert.False(t, resolved.active("js"))
+	assert.True(t, resolved.active("rust"))
+	assert.False(t, resolved.active("python"))
+	assert.False(t, resolved.active("java"))
 }
 
 // TestResolveLanguage_PythonOverride forces Python even when other manifests
@@ -295,11 +295,11 @@ func TestResolveLanguage_PythonOverride(t *testing.T) {
 	eco := detectEcosystems(dir)
 	resolved, err := resolveLanguage("python", eco)
 	require.NoError(t, err)
-	assert.False(t, resolved.hasGo)
-	assert.False(t, resolved.hasJS)
-	assert.False(t, resolved.hasRust)
-	assert.True(t, resolved.hasPython)
-	assert.False(t, resolved.hasJava)
+	assert.False(t, resolved.active("go"))
+	assert.False(t, resolved.active("js"))
+	assert.False(t, resolved.active("rust"))
+	assert.True(t, resolved.active("python"))
+	assert.False(t, resolved.active("java"))
 }
 
 // TestResolveLanguage_JavaOverride forces Java even when other manifests are
@@ -312,17 +312,17 @@ func TestResolveLanguage_JavaOverride(t *testing.T) {
 	eco := detectEcosystems(dir)
 	resolved, err := resolveLanguage("java", eco)
 	require.NoError(t, err)
-	assert.False(t, resolved.hasGo)
-	assert.False(t, resolved.hasJS)
-	assert.False(t, resolved.hasRust)
-	assert.False(t, resolved.hasPython)
-	assert.True(t, resolved.hasJava)
+	assert.False(t, resolved.active("go"))
+	assert.False(t, resolved.active("js"))
+	assert.False(t, resolved.active("rust"))
+	assert.False(t, resolved.active("python"))
+	assert.True(t, resolved.active("java"))
 }
 
 // TestResolveLanguage_UnknownValue verifies that an unrecognised --language
 // value returns an operational error rather than silently falling through.
 func TestResolveLanguage_UnknownValue(t *testing.T) {
-	eco := ecosystems{hasGo: true, hasJS: true}
+	eco := ecosystems{"go": true, "js": true}
 	_, err := resolveLanguage("bogus", eco)
 	require.Error(t, err, "--language bogus must return an error")
 	assert.Contains(t, err.Error(), "bogus", "error message must name the invalid value")
@@ -340,7 +340,7 @@ func TestResolveLanguage_UnknownValue(t *testing.T) {
 // ecosystems are in scope, no warning is emitted and incomplete stays false.
 func TestWarnUnsupportedEcosystems_NonePresent(t *testing.T) {
 	var buf bytes.Buffer
-	eco := ecosystems{hasGo: true, hasJS: true}
+	eco := ecosystems{"go": true, "js": true}
 	gotIncomplete := warnUnsupportedEcosystems(eco, &buf)
 	assert.False(t, gotIncomplete, "Go+JS in scope → no incomplete signal")
 	assert.Empty(t, buf.String(), "no warning when no unsupported ecosystem is present")
@@ -351,7 +351,7 @@ func TestWarnUnsupportedEcosystems_NonePresent(t *testing.T) {
 // This is the critical "unknown ≠ safe" regression: prior code exited 0 clean.
 func TestWarnUnsupportedEcosystems_RustOnly(t *testing.T) {
 	var buf bytes.Buffer
-	eco := ecosystems{hasRust: true}
+	eco := ecosystems{"rust": true}
 	gotIncomplete := warnUnsupportedEcosystems(eco, &buf)
 	assert.True(t, gotIncomplete, "Rust detected but no scan path → incomplete must be true")
 	assert.Contains(t, buf.String(), "rust", "warning must name the unsupported ecosystem")
@@ -362,7 +362,7 @@ func TestWarnUnsupportedEcosystems_RustOnly(t *testing.T) {
 // ecosystem set emits a warning and returns incomplete=true.
 func TestWarnUnsupportedEcosystems_PythonOnly(t *testing.T) {
 	var buf bytes.Buffer
-	eco := ecosystems{hasPython: true}
+	eco := ecosystems{"python": true}
 	gotIncomplete := warnUnsupportedEcosystems(eco, &buf)
 	assert.True(t, gotIncomplete, "Python detected but no scan path → incomplete must be true")
 	assert.Contains(t, buf.String(), "python", "warning must name the unsupported ecosystem")
@@ -373,7 +373,7 @@ func TestWarnUnsupportedEcosystems_PythonOnly(t *testing.T) {
 // set emits a warning and returns incomplete=true.
 func TestWarnUnsupportedEcosystems_JavaOnly(t *testing.T) {
 	var buf bytes.Buffer
-	eco := ecosystems{hasJava: true}
+	eco := ecosystems{"java": true}
 	gotIncomplete := warnUnsupportedEcosystems(eco, &buf)
 	assert.True(t, gotIncomplete, "Java detected but no scan path → incomplete must be true")
 	assert.Contains(t, buf.String(), "java", "warning must name the unsupported ecosystem")
@@ -385,7 +385,7 @@ func TestWarnUnsupportedEcosystems_JavaOnly(t *testing.T) {
 // or JS), all three are warned and incomplete is true.
 func TestWarnUnsupportedEcosystems_AllThreeUnsupported(t *testing.T) {
 	var buf bytes.Buffer
-	eco := ecosystems{hasRust: true, hasPython: true, hasJava: true}
+	eco := ecosystems{"rust": true, "python": true, "java": true}
 	gotIncomplete := warnUnsupportedEcosystems(eco, &buf)
 	assert.True(t, gotIncomplete, "rust+python+java detected → incomplete must be true")
 	output := buf.String()
@@ -401,7 +401,7 @@ func TestWarnUnsupportedEcosystems_AllThreeUnsupported(t *testing.T) {
 // "silent coverage gap under zero-config auto" case from the blocking findings.
 func TestWarnUnsupportedEcosystems_PolyglotWithGoAndRust(t *testing.T) {
 	var buf bytes.Buffer
-	eco := ecosystems{hasGo: true, hasRust: true}
+	eco := ecosystems{"go": true, "rust": true}
 	gotIncomplete := warnUnsupportedEcosystems(eco, &buf)
 	assert.True(t, gotIncomplete, "Go+Rust: Rust has no scan path → incomplete must be true")
 	output := buf.String()
@@ -413,7 +413,7 @@ func TestWarnUnsupportedEcosystems_PolyglotWithGoAndRust(t *testing.T) {
 // produces no warning and no incomplete signal (Go has a full scan path).
 func TestWarnUnsupportedEcosystems_GoOnly(t *testing.T) {
 	var buf bytes.Buffer
-	eco := ecosystems{hasGo: true}
+	eco := ecosystems{"go": true}
 	gotIncomplete := warnUnsupportedEcosystems(eco, &buf)
 	assert.False(t, gotIncomplete, "Go-only → fully supported, no incomplete")
 	assert.Empty(t, buf.String(), "no warning for fully-supported ecosystem")
@@ -423,7 +423,7 @@ func TestWarnUnsupportedEcosystems_GoOnly(t *testing.T) {
 // produces no warning and no incomplete signal (JS has a full scan path).
 func TestWarnUnsupportedEcosystems_JSOnly(t *testing.T) {
 	var buf bytes.Buffer
-	eco := ecosystems{hasJS: true}
+	eco := ecosystems{"js": true}
 	gotIncomplete := warnUnsupportedEcosystems(eco, &buf)
 	assert.False(t, gotIncomplete, "JS-only → fully supported, no incomplete")
 	assert.Empty(t, buf.String(), "no warning for fully-supported ecosystem")

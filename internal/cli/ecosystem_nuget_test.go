@@ -16,8 +16,8 @@ import (
 // TestNugetAdapterRegistered verifies that the NuGet Lane-A adapter is
 // registered in the global registry with the expected metadata.
 func TestNugetAdapterRegistered(t *testing.T) {
-	var found *LaneAAdapter
-	for _, a := range LaneAAdapters() {
+	var found *EcosystemAdapter
+	for _, a := range EcosystemAdapters() {
 		if a.Language == "dotnet" {
 			a := a
 			found = &a
@@ -42,8 +42,8 @@ func TestDetectEcosystems_PackagesLockJSON(t *testing.T) {
 		[]byte(packagesLockJSONSingleDep), 0o644))
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasDotnet, "packages.lock.json present → .NET ecosystem detected")
-	assert.False(t, eco.hasGo, "no go.mod → Go not detected")
+	assert.True(t, eco.active("dotnet"), "packages.lock.json present → .NET ecosystem detected")
+	assert.False(t, eco.active("go"), "no go.mod → Go not detected")
 }
 
 // TestDetectEcosystems_PackagesConfig verifies that packages.config triggers
@@ -54,7 +54,7 @@ func TestDetectEcosystems_PackagesConfig(t *testing.T) {
 		[]byte(packagesConfigSingle), 0o644))
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasDotnet, "packages.config present → .NET ecosystem detected")
+	assert.True(t, eco.active("dotnet"), "packages.config present → .NET ecosystem detected")
 }
 
 // TestDetectEcosystems_Csproj verifies that a *.csproj file triggers NuGet
@@ -65,7 +65,7 @@ func TestDetectEcosystems_Csproj(t *testing.T) {
 		[]byte(csprojSingleDep), 0o644))
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasDotnet, "*.csproj present → .NET ecosystem detected via glob")
+	assert.True(t, eco.active("dotnet"), "*.csproj present → .NET ecosystem detected via glob")
 }
 
 // ── packages.lock.json parsing ───────────────────────────────────────────────

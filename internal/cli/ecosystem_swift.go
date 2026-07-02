@@ -69,7 +69,7 @@ import (
 )
 
 func init() {
-	RegisterLaneAAdapter(LaneAAdapter{
+	RegisterEcosystemAdapter(EcosystemAdapter{
 		Ecosystem: advisory.EcosystemSwiftURL,
 		Language:  "swift",
 		// DetectFiles: Package.resolved is the only SwiftPM lockfile we parse.
@@ -78,6 +78,7 @@ func init() {
 		// for zero-config auto-detection — projects that have never run `swift package
 		// resolve` will not have a Package.resolved, so they are not falsely detected.
 		DetectFiles:   []string{"Package.resolved"},
+		MaxConfidence: ceilingPackage,
 		ParseLockfile: parsePackageResolved,
 		// NormalizeName is nil: normalizeSwiftURL is applied inside ParseLockfile so
 		// dep.Name already holds the canonical OSV form (e.g. "github.com/apple/swift-nio").
@@ -154,7 +155,7 @@ type packageResolvedState struct {
 
 // ── parsePackageResolved ──────────────────────────────────────────────────────
 
-// parsePackageResolved is the LaneAAdapter.ParseLockfile implementation for Swift.
+// parsePackageResolved is the EcosystemAdapter.ParseLockfile implementation for Swift.
 //
 // It reads Package.resolved (static JSON) and returns the fully-pinned dependency
 // closure. Both format v1 (object.pins with repositoryURL) and v2/v3 (top-level

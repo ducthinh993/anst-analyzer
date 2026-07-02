@@ -16,8 +16,8 @@ import (
 // TestSwiftAdapterRegistered verifies that the SwiftURL Lane-A adapter is
 // registered in the global registry with the expected metadata.
 func TestSwiftAdapterRegistered(t *testing.T) {
-	var found *LaneAAdapter
-	for _, a := range LaneAAdapters() {
+	var found *EcosystemAdapter
+	for _, a := range EcosystemAdapters() {
 		if a.Language == "swift" {
 			a := a
 			found = &a
@@ -40,9 +40,9 @@ func TestDetectEcosystems_PackageResolved(t *testing.T) {
 		[]byte(packageResolvedV2NIO), 0o644))
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasSwift, "Package.resolved present → Swift ecosystem detected")
-	assert.False(t, eco.hasGo, "no go.mod → Go not detected")
-	assert.False(t, eco.hasRuby, "no Gemfile → Ruby not detected")
+	assert.True(t, eco.active("swift"), "Package.resolved present → Swift ecosystem detected")
+	assert.False(t, eco.active("go"), "no go.mod → Go not detected")
+	assert.False(t, eco.active("ruby"), "no Gemfile → Ruby not detected")
 }
 
 // TestDetectEcosystems_NoPackageResolved verifies that a directory without
@@ -54,7 +54,7 @@ func TestDetectEcosystems_NoPackageResolved(t *testing.T) {
 		[]byte("// swift-tools-version:5.9\n"), 0o644))
 
 	eco := detectEcosystems(dir)
-	assert.False(t, eco.hasSwift,
+	assert.False(t, eco.active("swift"),
 		"Package.swift alone must not set hasSwift (only Package.resolved is safe to parse)")
 }
 

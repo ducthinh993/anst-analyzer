@@ -38,10 +38,11 @@ func init() {
 	// gradle.lockfile (no build.gradle co-located) is still detected as a Java
 	// project. Without it, detectEcosystems returns hasJava=false → the Lane-A
 	// loop is skipped → false-clean exit 0 (advisories never queried).
-	RegisterLaneAAdapter(LaneAAdapter{
+	RegisterEcosystemAdapter(EcosystemAdapter{
 		Ecosystem:     advisory.EcosystemMaven,
 		Language:      "java",
 		DetectFiles:   []string{"pom.xml", "gradle.lockfile", "build.gradle", "build.gradle.kts"},
+		MaxConfidence: ceilingPackage,
 		ParseLockfile: parseMavenLockfile,
 		// NormalizeName is nil: Maven coordinates (groupId:artifactId) are
 		// case-sensitive and OSV records preserve their original casing.
@@ -50,7 +51,7 @@ func init() {
 	})
 }
 
-// parseMavenLockfile is the LaneAAdapter.ParseLockfile implementation for the
+// parseMavenLockfile is the EcosystemAdapter.ParseLockfile implementation for the
 // Maven (JVM) ecosystem.
 //
 // Resolution priority:

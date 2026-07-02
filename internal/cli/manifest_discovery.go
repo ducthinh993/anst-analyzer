@@ -61,7 +61,7 @@ var ignoredDirSet = map[string]struct{}{
 // DetectFiles. DetectFiles entries starting with "*." are treated as suffix globs
 // (e.g. "*.csproj" matches any non-directory file whose name ends in ".csproj").
 // All other entries are matched as exact filenames.
-func dirMatchesAdapter(dir string, a LaneAAdapter) bool {
+func dirMatchesAdapter(dir string, a EcosystemAdapter) bool {
 	for _, f := range a.DetectFiles {
 		if strings.HasPrefix(f, "*.") {
 			suffix := strings.ToLower(f[1:]) // e.g. "*.csproj" → ".csproj"
@@ -165,7 +165,7 @@ func dedupLaneADeps(deps []ResolvedDep, normalize func(string) string) []Resolve
 //     adapters. If the cap is reached the walk terminates with capped=true.
 //
 // Callers MUST set incomplete=true when capped=true.
-func discoverLaneAProjectDirs(moduleRoot string, adapters []LaneAAdapter) (dirs map[string][]string, capped bool) {
+func discoverLaneAProjectDirs(moduleRoot string, adapters []EcosystemAdapter) (dirs map[string][]string, capped bool) {
 	dirs = make(map[string][]string)
 	if len(adapters) == 0 {
 		return

@@ -88,10 +88,10 @@ func installDependencies(ctx context.Context, eco ecosystems, moduleRoot string,
 		return
 	}
 
-	if eco.hasJS {
+	if eco.active("js") {
 		runInstallPlan(ctx, "js", moduleRoot, selectJSInstall(moduleRoot))
 	}
-	if eco.hasRust {
+	if eco.active("rust") {
 		runInstallPlan(ctx, "rust", moduleRoot, selectRustInstall())
 	}
 	// Go, Lane-A, and Python are intentionally no-ops here (see doc comment).

@@ -29,8 +29,8 @@ func touch(t *testing.T, dir, name string) {
 // testAdapters returns two minimal adapters for use in discovery tests:
 // - "php"  → DetectFiles: ["composer.lock", "composer.json"]
 // - "ruby" → DetectFiles: ["Gemfile.lock", "Gemfile"]
-func testAdapters() []LaneAAdapter {
-	return []LaneAAdapter{
+func testAdapters() []EcosystemAdapter {
+	return []EcosystemAdapter{
 		{
 			Language:      "php",
 			DetectFiles:   []string{"composer.lock", "composer.json"},
@@ -45,8 +45,8 @@ func testAdapters() []LaneAAdapter {
 }
 
 // testAdaptersWithGlob returns an adapter that uses a suffix-glob DetectFile.
-func testAdaptersWithGlob() []LaneAAdapter {
-	return []LaneAAdapter{
+func testAdaptersWithGlob() []EcosystemAdapter {
+	return []EcosystemAdapter{
 		{
 			Language:      "dotnet",
 			DetectFiles:   []string{"packages.lock.json", "*.csproj"},

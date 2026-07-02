@@ -16,8 +16,8 @@ import (
 // TestHexAdapterRegistered verifies that the Hex Lane-A adapter is registered
 // in the global registry with the expected metadata.
 func TestHexAdapterRegistered(t *testing.T) {
-	var found *LaneAAdapter
-	for _, a := range LaneAAdapters() {
+	var found *EcosystemAdapter
+	for _, a := range EcosystemAdapters() {
 		if a.Language == "elixir" {
 			a := a
 			found = &a
@@ -40,9 +40,9 @@ func TestDetectEcosystems_MixLock(t *testing.T) {
 		[]byte(mixLockPhoenix), 0o644))
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasElixir, "mix.lock present → Elixir ecosystem detected")
-	assert.False(t, eco.hasGo, "no go.mod → Go not detected")
-	assert.False(t, eco.hasRuby, "no Gemfile.lock → Ruby not detected")
+	assert.True(t, eco.active("elixir"), "mix.lock present → Elixir ecosystem detected")
+	assert.False(t, eco.active("go"), "no go.mod → Go not detected")
+	assert.False(t, eco.active("ruby"), "no Gemfile.lock → Ruby not detected")
 }
 
 // TestDetectEcosystems_RebarLock verifies that rebar.lock alone triggers Elixir detection.
@@ -52,8 +52,8 @@ func TestDetectEcosystems_RebarLock(t *testing.T) {
 		[]byte(rebarLockCowboy), 0o644))
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasElixir, "rebar.lock present → Elixir ecosystem detected")
-	assert.False(t, eco.hasGo, "no go.mod → Go not detected")
+	assert.True(t, eco.active("elixir"), "rebar.lock present → Elixir ecosystem detected")
+	assert.False(t, eco.active("go"), "no go.mod → Go not detected")
 }
 
 // ── parseMixLock ──────────────────────────────────────────────────────────────

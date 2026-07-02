@@ -18,7 +18,7 @@ import (
 // returns complete=true; the stub always returns complete=false.
 //
 // Callers that do not need to distinguish can call findAnyJavaAdapter.
-func findMavenAdapter(t *testing.T) *LaneAAdapter {
+func findMavenAdapter(t *testing.T) *EcosystemAdapter {
 	t.Helper()
 
 	// Build a temp dir with a gradle.lockfile so the real adapter can signal
@@ -26,7 +26,7 @@ func findMavenAdapter(t *testing.T) *LaneAAdapter {
 	dir := t.TempDir()
 	writeLockfile(t, dir, "gradle.lockfile", singleDepGradleLockfile)
 
-	for _, a := range LaneAAdapters() {
+	for _, a := range EcosystemAdapters() {
 		if a.Language != "java" {
 			continue
 		}
@@ -742,8 +742,8 @@ func TestMavenAdapter_ParseGradleLockfile_MalformedLines(t *testing.T) {
 // fully parsed gradle.lockfile. The happy path (clean Java scan with exit 0) is
 // unreachable unless the stub is removed.
 func TestMavenAdapter_OnlyOneJavaAdapterRegistered(t *testing.T) {
-	var javaAdapters []LaneAAdapter
-	for _, a := range LaneAAdapters() {
+	var javaAdapters []EcosystemAdapter
+	for _, a := range EcosystemAdapters() {
 		if a.Language == "java" {
 			javaAdapters = append(javaAdapters, a)
 		}
@@ -791,10 +791,10 @@ func TestMavenAdapter_DetectEcosystems_GradleLockfileOnly(t *testing.T) {
 	writeLockfile(t, dir, "gradle.lockfile", singleDepGradleLockfile)
 
 	eco := detectEcosystems(dir)
-	assert.True(t, eco.hasJava,
+	assert.True(t, eco.active("java"),
 		"gradle.lockfile-only project root must set hasJava=true via registry-driven detection; "+
 			"without this, the Lane-A loop is skipped and the scan exits 0 (false-clean)")
-	assert.False(t, eco.hasGo, "no go.mod → Go must not be detected")
+	assert.False(t, eco.active("go"), "no go.mod → Go must not be detected")
 }
 
 // TestMavenAdapter_FullPipeline_GradleLockfileOnly is the integration-level
@@ -811,7 +811,7 @@ func TestMavenAdapter_FullPipeline_GradleLockfileOnly(t *testing.T) {
 
 	// Step 1: ecosystem detection must find Java.
 	eco := detectEcosystems(dir)
-	require.True(t, eco.hasJava,
+	require.True(t, eco.active("java"),
 		"precondition: gradle.lockfile must trigger Java detection")
 
 	// Step 2: find the (now single) real maven adapter.
@@ -832,7 +832,7 @@ func TestMavenAdapter_FullPipeline_GradleLockfileOnly(t *testing.T) {
 	// adapter loop must produce complete=true. Simulate the scan.go Lane-A loop:
 	// if ANY adapter returns complete=false, it sets incomplete=true.
 	allComplete := true
-	for _, a := range LaneAAdapters() {
+	for _, a := range EcosystemAdapters() {
 		if a.Language != "java" {
 			continue
 		}

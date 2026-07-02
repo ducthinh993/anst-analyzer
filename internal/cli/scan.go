@@ -59,48 +59,21 @@ type scanFlags struct {
 	skipReachabilityAnalysis bool
 }
 
-// ecosystems records which ecosystem marker files were detected in a module root.
-// Each field corresponds to one language ecosystem; true means the detection
-// manifest for that ecosystem was found.
+// detectEcosystems checks moduleRoot for the well-known manifest files of every
+// registered ecosystem and returns the set of those present. It never errors; an
+// absent file simply leaves the ecosystem out of the set (unknown ≠ safe: the
+// caller decides what to do with an empty set).
 //
-// Detection manifests:
-//   - Go:     go.mod
-//   - JS/TS:  package.json
-//   - Rust:   Cargo.toml
-//   - Python: pyproject.toml OR requirements.txt
-//   - Java:   pom.xml OR build.gradle OR build.gradle.kts
-//   - .NET:   packages.lock.json OR packages.config OR *.csproj
-type ecosystems struct {
-	hasGo     bool // go.mod present
-	hasJS     bool // package.json present
-	hasRust   bool // Cargo.toml present
-	hasPython bool // pyproject.toml or requirements.txt present
-	hasJava   bool // pom.xml, build.gradle, or build.gradle.kts present
-	hasDotnet bool // packages.lock.json, packages.config, or *.csproj present
-	hasPhp    bool // composer.lock or composer.json present
-	hasRuby   bool // Gemfile.lock present
-	hasElixir bool // mix.lock or rebar.lock present
-	hasDart   bool // pubspec.lock or pubspec.yaml present
-	hasSwift  bool // Package.resolved present
-}
-
-// detectEcosystems checks moduleRoot for the well-known manifest files of each
-// supported ecosystem. It never errors; an absent file simply leaves the field
-// false (unknown ≠ safe: the caller decides what to do with an empty set).
-//
-// Plugin-backed ecosystems (Go, JS/TS, Rust, Python) are detected by hardcoded
-// manifest names here. Lane-A ecosystems (Java, .NET, and future additions) are
-// detected via the adapter registry in ecosystem_registry.go: their detect-file
-// names live in the adapter's DetectFiles field, not in this function. Adding a
-// new Lane-A ecosystem only requires registering its adapter — no edits to
-// detectEcosystems.
+// Detection is fully registry-driven: every EcosystemAdapter (plugin-backed and
+// lockfile-static alike) contributes its DetectFiles. Adding an ecosystem only
+// requires registering its adapter — no edits to this function.
 //
 // DetectFiles entries that start with "*." are treated as suffix-glob patterns
 // (e.g., "*.csproj") and match any non-directory file in moduleRoot with that
 // extension. This avoids hardcoding project-specific filenames for ecosystems
 // where the manifest name varies per project (e.g., .NET SDK-style .csproj files).
 func detectEcosystems(moduleRoot string) ecosystems {
-	var e ecosystems
+	e := make(ecosystems)
 	stat := func(name string) bool {
 		_, err := os.Stat(filepath.Join(moduleRoot, name))
 		return err == nil
@@ -119,14 +92,7 @@ func detectEcosystems(moduleRoot string) ecosystems {
 		}
 		return false
 	}
-	e.hasGo = stat("go.mod")
-	e.hasJS = stat("package.json")
-	e.hasRust = stat("Cargo.toml")
-	e.hasPython = stat("pyproject.toml") || stat("requirements.txt")
-	// Lane-A ecosystems: detection is driven by the adapter registry so that
-	// new ecosystems only need to update DetectFiles in ecosystem_registry.go.
-	// "*.ext" patterns are matched with hasFileSuffix; all others use stat.
-	for _, a := range LaneAAdapters() {
+	for _, a := range ecosystemRegistry {
 		for _, f := range a.DetectFiles {
 			var matched bool
 			if strings.HasPrefix(f, "*.") {
@@ -135,7 +101,7 @@ func detectEcosystems(moduleRoot string) ecosystems {
 				matched = stat(f)
 			}
 			if matched {
-				setLaneAFlag(&e, a.Language)
+				e.set(a.Language)
 				break
 			}
 		}
@@ -143,88 +109,70 @@ func detectEcosystems(moduleRoot string) ecosystems {
 	return e
 }
 
-// resolveLanguage applies the --language override to the detected ecosystems
-// and returns the resulting ecosystem set. "auto" defers to detection and
-// passes all detected ecosystems through (zero-config: a polyglot repo runs
-// every detected plugin). The explicit values "go", "js", "rust", "python",
-// "java" are optional narrowing filters — they never activate an ecosystem
-// that has no manifest file, but they do restrict scanning to that ecosystem
-// only. Any unrecognised value is an operational error.
+// resolveLanguage applies the --language override to the detected ecosystem set.
+// "auto" defers to detection and passes every detected ecosystem through
+// (zero-config: a polyglot repo runs every detected path). Any other recognised
+// value is a narrowing filter — it restricts scanning to that ecosystem only but
+// never activates an ecosystem that has no manifest file. An unrecognised value
+// is an operational error.
 func resolveLanguage(lang string, e ecosystems) (ecosystems, error) {
-	switch lang {
-	case "auto":
+	if lang == "auto" {
 		return e, nil
-	case "go":
-		return ecosystems{hasGo: true}, nil
-	case "js":
-		return ecosystems{hasJS: true}, nil
-	case "rust":
-		return ecosystems{hasRust: true}, nil
-	case "python":
-		return ecosystems{hasPython: true}, nil
-	case "java":
-		return ecosystems{hasJava: true}, nil
-	case "dotnet":
-		return ecosystems{hasDotnet: true}, nil
-	case "php":
-		return ecosystems{hasPhp: true}, nil
-	case "ruby":
-		return ecosystems{hasRuby: true}, nil
-	case "elixir":
-		return ecosystems{hasElixir: true}, nil
-	case "dart":
-		return ecosystems{hasDart: true}, nil
-	case "swift":
-		return ecosystems{hasSwift: true}, nil
-	default:
-		return ecosystems{}, fmt.Errorf("unknown --language value %q: must be one of auto|go|js|rust|python|java|dotnet|php|ruby|elixir|dart|swift", lang)
 	}
+	if isKnownLanguage(lang) {
+		return ecosystems{lang: true}, nil
+	}
+	return nil, fmt.Errorf("unknown --language value %q: must be one of %s", lang, languageChoices())
 }
 
 // warnUnsupportedEcosystems writes a warning to w for every ecosystem in eco
-// that is detected (or explicitly selected via --language) but has no scan
-// path yet (rust, python, java, dotnet, php, ruby, elixir, dart). It returns true when any such
-// ecosystem is present, signalling that the caller must set incomplete=true.
+// that is detected (or explicitly selected via --language) but has no scan path
+// yet (rust, python, java, dotnet, php, ruby, elixir, dart, swift). It returns
+// true when any such ecosystem is present, signalling that the caller must set
+// incomplete=true.
 //
 // "unknown ≠ safe": a detected ecosystem with no scan path MUST surface as an
 // incomplete scan (exit 3) rather than a false-clean pass (exit 0). This
 // mirrors the npm-no-capable-source guard at the JS advisory block.
 //
-// Go and JS always have full scan paths and are never warned about.
-// Rust and Python are warned about only when their plugin binaries are absent
-// (callers reduce the eco flags before calling this when a plugin is available).
+// Go and JS always have full scan paths and are never warned about. Rust and
+// Python are warned about only when their plugin binaries are absent (callers
+// reduce the eco set before calling this when a plugin is available).
+// Lockfile-static ecosystems are cleared by the registry loop when their adapter
+// ran; they remain here as a symmetric backstop so a detected-but-unscanned
+// ecosystem still surfaces as incomplete rather than passing false-clean.
+//
+// Iteration order is orderedLanguages (never map iteration) so the warning
+// sequence is deterministic.
 func warnUnsupportedEcosystems(eco ecosystems, w io.Writer) bool {
-	type unsupported struct {
-		flag bool
-		name string
-	}
-	pending := []unsupported{
-		{eco.hasRust, "rust"},
-		{eco.hasPython, "python"},
-		// Lane-A ecosystems (java, dotnet, php) are cleared by the registry loop
-		// when their adapter ran; they remain here as a symmetric backstop so a
-		// detected-but-unscanned Lane-A ecosystem still surfaces as incomplete
-		// rather than passing false-clean (unknown ≠ safe).
-		{eco.hasJava, "java"},
-		{eco.hasDotnet, "dotnet"},
-		{eco.hasPhp, "php"},
-		{eco.hasRuby, "ruby"},
-		{eco.hasElixir, "elixir"},
-		{eco.hasDart, "dart"},
-		{eco.hasSwift, "swift"},
-	}
 	incomplete := false
-	for _, u := range pending {
-		if !u.flag {
+	for _, lang := range orderedLanguages {
+		if lang == "go" || lang == "js" {
+			continue // Go and JS always have a full scan path
+		}
+		if !eco.active(lang) {
 			continue
 		}
 		_, _ = fmt.Fprintf(w,
 			"warning: %s ecosystem detected but no %s scan path is available yet; "+
 				"%s deps were not checked for vulnerabilities; scan marked incomplete\n",
-			u.name, u.name, u.name)
+			lang, lang, lang)
 		incomplete = true
 	}
 	return incomplete
+}
+
+// ceilingToConfidence maps an ecosystem's local capability tier to the wire-level
+// commit0v1.Confidence. This is the single seam where the local confidenceCeiling
+// enum meets the generated proto package, keeping proto imports out of the
+// adapter files.
+func ceilingToConfidence(c confidenceCeiling) commit0v1.Confidence {
+	switch c {
+	case ceilingSymbol:
+		return commit0v1.Confidence_CONFIDENCE_SYMBOL_REACHABLE
+	default:
+		return commit0v1.Confidence_CONFIDENCE_PACKAGE_REACHABLE
+	}
 }
 
 // sourceAliases maps user-facing --source flag tokens to canonical advisory
@@ -374,7 +322,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 	// lives at the repo root is still recognised and scanned rather than
 	// silently skipped. The result (laneADiscovered, discoveryCapped) is
 	// carried through to step 5e to avoid walking the tree a second time.
-	laneADiscovered, discoveryCapped := discoverLaneAProjectDirs(moduleRoot, LaneAAdapters())
+	laneADiscovered, discoveryCapped := discoverLaneAProjectDirs(moduleRoot, lockfileAdapters())
 
 	// A Lane-A subdir manifest counts as "something to scan" even when no root
 	// manifest exists (multi-root project layouts).
@@ -386,7 +334,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 		}
 	}
 
-	if !eco.hasGo && !eco.hasJS && !eco.hasRust && !eco.hasPython && !eco.hasJava && !eco.hasDotnet && !eco.hasPhp && !eco.hasRuby && !eco.hasElixir && !eco.hasDart && !eco.hasSwift && !laneASubdirFound {
+	if !eco.any() && !laneASubdirFound {
 		fmt.Fprintf(os.Stderr,
 			"commit0-analyzer scan: %s contains no recognised ecosystem manifest "+
 				"(go.mod, package.json, Cargo.toml, pyproject.toml, requirements.txt, "+
@@ -401,7 +349,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 
 	// The Go advisory pipeline (steps 3–5) requires go.mod to resolve deps.
 	// Skip it when only non-Go ecosystems were selected.
-	if eco.hasGo {
+	if eco.active("go") {
 		goModPath := filepath.Join(moduleRoot, "go.mod")
 		if _, err := os.Stat(goModPath); err != nil {
 			fmt.Fprintf(os.Stderr, "commit0-analyzer scan: --language go selected but %s does not contain a go.mod file: %v\n",
@@ -430,7 +378,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 
 	// ── 3. Resolve module dependencies (Go only) ─────────────────────────────
 	var deps []modDep
-	if eco.hasGo {
+	if eco.active("go") {
 		var depsErr error
 		deps, depsErr = listModDeps(ctx, moduleRoot)
 		if depsErr != nil {
@@ -501,7 +449,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 		}
 	}
 
-	if eco.hasGo {
+	if eco.active("go") {
 		cacheDir, cacheErr := os.UserCacheDir()
 		if cacheErr != nil {
 			fmt.Fprintf(os.Stderr, "commit0-analyzer scan: cannot locate user cache dir: %v\n", cacheErr)
@@ -660,7 +608,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 	// go-vuln-db source returns (nil,nil) for npm (it covers only "Go") —
 	// confirmed by goVulnDBClient.Query checking pkg.Ecosystem != EcosystemGo.
 	// OSV source uses the "npm" bundle (npm/all.zip from the OSV GCS bucket).
-	if eco.hasJS {
+	if eco.active("js") {
 		// Resolve the JS plugin binary path (same as the manifest lookup used later
 		// for registering the gRPC plugin, but needed now for --list-deps).
 		jsPluginBin := flags.jsPluginBin
@@ -819,7 +767,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 
 	// ── 5c. Rust ecosystem — pre-build manifest check and advisory query ────
 	//
-	// When Cargo.toml is detected (eco.hasRust), attempt to build the Rust
+	// When Cargo.toml is detected (eco.active("rust")), attempt to build the Rust
 	// plugin manifest now so we know whether the binary is available. The
 	// manifest is registered in step 7 (after reg is initialized). If the
 	// binary is absent, we fall through to warnUnsupportedEcosystems.
@@ -832,7 +780,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 	// "unknown ≠ safe": a Cargo.toml without a registered plugin means the
 	// Rust deps were not checked; the scan MUST be marked incomplete.
 	var rustManifest *host.Manifest
-	if eco.hasRust {
+	if eco.active("rust") {
 		rustManifest, _ = buildRustPluginManifest(ctx, flags.rustPluginBin)
 	}
 
@@ -840,7 +788,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 	// coverage. If Rust is in scope but no OSV-capable source is selected, the
 	// plugin would run against an empty advisory list and silently exit 0.
 	// "unknown ≠ safe": warn and mark incomplete so the gate cannot pass clean.
-	if eco.hasRust && rustManifest != nil && !selectedSources[advisory.SourceOSV] {
+	if eco.active("rust") && rustManifest != nil && !selectedSources[advisory.SourceOSV] {
 		fmt.Fprintf(os.Stderr,
 			"warning: Rust crates.io deps found but no crates.io-capable advisory source is selected "+
 				"(osv.dev covers crates.io; go-vuln-db does not); "+
@@ -949,7 +897,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 
 	// ── 5d. Python ecosystem — pre-build manifest check and advisory query ──
 	//
-	// When pyproject.toml or requirements.txt is detected (eco.hasPython), attempt
+	// When pyproject.toml or requirements.txt is detected (eco.active("python")), attempt
 	// to build the Python plugin manifest now so we know whether the binary is
 	// available. The manifest is registered in step 7 (after reg is initialized).
 	// If the binary is absent, we fall through to warnUnsupportedEcosystems.
@@ -964,7 +912,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 	// scenarios where the plugin cannot perform reachability analysis are surfaced
 	// as incomplete=true so the scan exits 3, never 0 (false-clean).
 	var pythonManifest *host.Manifest
-	if eco.hasPython {
+	if eco.active("python") {
 		pythonManifest, _ = buildPythonPluginManifest(ctx, flags.pythonPluginBin)
 	}
 
@@ -972,7 +920,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 	// coverage. If Python is in scope but no OSV-capable source is selected,
 	// the plugin would run against an empty advisory list and silently exit 0.
 	// "unknown ≠ safe": warn and mark incomplete so the gate cannot pass clean.
-	if eco.hasPython && pythonManifest != nil && !selectedSources[advisory.SourceOSV] {
+	if eco.active("python") && pythonManifest != nil && !selectedSources[advisory.SourceOSV] {
 		fmt.Fprintf(os.Stderr,
 			"warning: Python PyPI deps found but no PyPI-capable advisory source is selected "+
 				"(osv.dev covers PyPI; go-vuln-db does not); "+
@@ -1130,15 +1078,15 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 	}
 
 	var laneAFindings []*commit0v1.Finding
-	for _, laneAAdapter := range LaneAAdapters() {
+	for _, laneAAdapter := range lockfileAdapters() {
 		// Determine which directories to scan for this adapter.
 		//
 		// Start from directories found by the bounded walk. If the adapter is also
 		// active via root detection (detectEcosystems) or an explicit --language
-		// flag (laneAAdapterActive), ensure moduleRoot appears first so single-root
-		// behaviour is fully preserved.
+		// flag, ensure moduleRoot appears first so single-root behaviour is fully
+		// preserved.
 		adapterDirs := laneADiscovered[laneAAdapter.Language]
-		if laneAAdapterActive(laneAAdapter.Language, eco) {
+		if eco.active(laneAAdapter.Language) {
 			adapterDirs = ensureRootFirst(adapterDirs, moduleRoot)
 		}
 		if len(adapterDirs) == 0 {
@@ -1295,7 +1243,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 					// Undecidable matches become CONFIDENCE_UNKNOWN + Incomplete=true so
 					// the policy gate correctly exits 3 rather than silently passing clean.
 					PerAdvisory: func(dep advisoryDep, adv *advisory.Advisory) {
-						laneAConf := commit0v1.Confidence_CONFIDENCE_PACKAGE_REACHABLE
+						laneAConf := ceilingToConfidence(laneAAdapter.MaxConfidence)
 						if adv.Incomplete {
 							laneAConf = commit0v1.Confidence_CONFIDENCE_UNKNOWN
 						}
@@ -1323,25 +1271,27 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 	// has no scan path (no advisory query, no plugin), mirroring the
 	// npm-no-capable-source guard above.
 	//
-	// Lane-A adapters that ran in step 5e (whether complete or incomplete) are
-	// removed from unsupportedEco before the call so warnUnsupportedEcosystems
-	// does not emit a duplicate warning for those ecosystems.
-	unsupportedEco := eco // copy; reduce below as plugins are confirmed
+	// Lockfile-static adapters that ran in step 5e (whether complete or
+	// incomplete) are removed from unsupportedEco before the call so
+	// warnUnsupportedEcosystems does not emit a duplicate warning for those
+	// ecosystems. ecosystems is a map (reference type): clone before reducing so
+	// the plugin-registration reads of eco below are not corrupted.
+	unsupportedEco := eco.clone() // copy; reduce below as plugins are confirmed
 	if rustManifest != nil {
-		unsupportedEco.hasRust = false // Rust plugin binary is available
+		unsupportedEco.clear("rust") // Rust plugin binary is available
 	}
 	if pythonManifest != nil {
-		unsupportedEco.hasPython = false // Python plugin binary is available
+		unsupportedEco.clear("python") // Python plugin binary is available
 	}
-	// Clear Lane-A ecosystems: they were handled by the registry loop above.
-	// Also clear for adapters that ran solely via subdirectory discovery (i.e.
-	// laneAAdapterActive is false but manifests were found in subdirs); their eco
-	// flag is already false so clearLaneAFlag is a no-op, but the explicit check
-	// ensures we don't accidentally leave a root-detected flag set when discovery
-	// also produced results.
-	for _, laneAAdapter := range LaneAAdapters() {
-		if laneAAdapterActive(laneAAdapter.Language, eco) || len(laneADiscovered[laneAAdapter.Language]) > 0 {
-			clearLaneAFlag(&unsupportedEco, laneAAdapter.Language)
+	// Clear lockfile-static ecosystems: they were handled by the registry loop
+	// above. Also clear for adapters that ran solely via subdirectory discovery
+	// (i.e. eco.active is false but manifests were found in subdirs); their eco
+	// entry is already absent so clear is a no-op, but the explicit check ensures
+	// we don't accidentally leave a root-detected flag set when discovery also
+	// produced results.
+	for _, laneAAdapter := range lockfileAdapters() {
+		if eco.active(laneAAdapter.Language) || len(laneADiscovered[laneAAdapter.Language]) > 0 {
+			unsupportedEco.clear(laneAAdapter.Language)
 		}
 	}
 	if warnUnsupportedEcosystems(unsupportedEco, os.Stderr) {
@@ -1383,7 +1333,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 	} else {
 		reg := host.NewRegistry()
 
-		if eco.hasGo {
+		if eco.active("go") {
 			pluginBin := flags.pluginBin
 			if pluginBin == "" {
 				var buildErr error
@@ -1418,7 +1368,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 			}
 		}
 
-		if eco.hasJS {
+		if eco.active("js") {
 			m, buildErr := buildJSPluginManifest(flags.jsPluginBin)
 			if buildErr != nil {
 				fmt.Fprintf(os.Stderr, "commit0-analyzer scan: js plugin not available: %v\n", buildErr)
@@ -1431,7 +1381,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 		}
 
 		// Register the Rust plugin when its manifest was successfully built in step 5c.
-		// rustManifest is non-nil only when eco.hasRust && the binary is present.
+		// rustManifest is non-nil only when eco.active("rust") && the binary is present.
 		if rustManifest != nil {
 			if addErr := reg.Add(rustManifest); addErr != nil {
 				fmt.Fprintf(os.Stderr, "commit0-analyzer scan: register rust plugin: %v\n", addErr)
@@ -1440,7 +1390,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 		}
 
 		// Register the Python plugin when its manifest was successfully built in step 5d.
-		// pythonManifest is non-nil only when eco.hasPython && the binary is present.
+		// pythonManifest is non-nil only when eco.active("python") && the binary is present.
 		if pythonManifest != nil {
 			if addErr := reg.Add(pythonManifest); addErr != nil {
 				fmt.Fprintf(os.Stderr, "commit0-analyzer scan: register python plugin: %v\n", addErr)

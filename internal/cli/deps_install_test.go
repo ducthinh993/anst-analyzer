@@ -121,7 +121,7 @@ func TestInstallDependencies_offlineSkipsEverything(t *testing.T) {
 	writeFile(t, filepath.Join(root, "package-lock.json"))
 	calls := stubRunner(t, nil)
 
-	installDependencies(context.Background(), ecosystems{hasJS: true, hasRust: true}, root, true /* offline */)
+	installDependencies(context.Background(), ecosystems{"js": true, "rust": true}, root, true /* offline */)
 
 	assert.Empty(t, *calls, "offline mode must never run an installer")
 }
@@ -131,7 +131,7 @@ func TestInstallDependencies_jsInvokesChosenCommand(t *testing.T) {
 	writeFile(t, filepath.Join(root, "pnpm-lock.yaml"))
 	calls := stubRunner(t, nil)
 
-	installDependencies(context.Background(), ecosystems{hasJS: true}, root, false)
+	installDependencies(context.Background(), ecosystems{"js": true}, root, false)
 
 	require.Len(t, *calls, 1)
 	got := (*calls)[0]
@@ -147,7 +147,7 @@ func TestInstallDependencies_skipsWhenNodeModulesPresent(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(root, nodeModulesDir), 0o755))
 	calls := stubRunner(t, nil)
 
-	installDependencies(context.Background(), ecosystems{hasJS: true}, root, false)
+	installDependencies(context.Background(), ecosystems{"js": true}, root, false)
 
 	assert.Empty(t, *calls, "node_modules present ⇒ no install")
 }
@@ -160,7 +160,7 @@ func TestInstallDependencies_failureWarnsAndContinues(t *testing.T) {
 	writeFile(t, filepath.Join(root, "Cargo.toml"))
 	calls := stubRunner(t, errors.New("npm not found on PATH"))
 
-	installDependencies(context.Background(), ecosystems{hasJS: true, hasRust: true}, root, false)
+	installDependencies(context.Background(), ecosystems{"js": true, "rust": true}, root, false)
 
 	// Both ecosystems were attempted despite the JS failure.
 	require.Len(t, *calls, 2)
@@ -173,7 +173,7 @@ func TestInstallDependencies_rustRunsCargoFetch(t *testing.T) {
 	writeFile(t, filepath.Join(root, "Cargo.toml"))
 	calls := stubRunner(t, nil)
 
-	installDependencies(context.Background(), ecosystems{hasRust: true}, root, false)
+	installDependencies(context.Background(), ecosystems{"rust": true}, root, false)
 
 	require.Len(t, *calls, 1)
 	assert.Equal(t, "cargo", (*calls)[0].pm)
@@ -185,7 +185,7 @@ func TestInstallDependencies_goAndPythonAreNoOps(t *testing.T) {
 	root := t.TempDir()
 	calls := stubRunner(t, nil)
 
-	installDependencies(context.Background(), ecosystems{hasGo: true, hasPython: true, hasJava: true}, root, false)
+	installDependencies(context.Background(), ecosystems{"go": true, "python": true, "java": true}, root, false)
 
 	assert.Empty(t, *calls, "Go/Python/Lane-A must not trigger an install")
 }
