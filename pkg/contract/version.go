@@ -19,10 +19,10 @@ import "fmt"
 //   - Different major: breaking change — always reject.
 const (
 	ProtocolMajor = 0
-	ProtocolMinor = 1
+	ProtocolMinor = 2
 
-	// ProtocolVersion is the canonical "major.minor" string, e.g. "0.1".
-	ProtocolVersion = "0.1"
+	// ProtocolVersion is the canonical "major.minor" string, e.g. "0.2".
+	ProtocolVersion = "0.2"
 )
 
 // Compatible reports whether a plugin at (remoteMajor, remoteMinor) is

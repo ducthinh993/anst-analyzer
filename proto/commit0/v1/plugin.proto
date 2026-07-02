@@ -284,6 +284,27 @@ message EcosystemBuildConfig {
   map<string, string> extra_env = 5;
 }
 
+// ResolvedDependency is one entry in the host's already-parsed dependency
+// closure for a lockfile-static ecosystem. The host resolves the closure from
+// the project's lockfile and passes it to the reachability plugin so the plugin
+// consumes the closure directly and never re-parses the lockfile in its own
+// language (DRY + smaller ACE surface: seven parsers already exist host-side).
+//
+// This message is optional and additive: plugins that predate it ignore the
+// resolved_deps field entirely (they resolve their own closure). New
+// lockfile-backed plugins advertise protocol minor >= 2 and consume it.
+message ResolvedDependency {
+  // name is the ecosystem-specific package name (e.g. "org.springframework:spring-core").
+  string name = 1;
+  // version is the resolved version string from the lockfile.
+  string version = 2;
+  // dep_type is the dependency classification from the lockfile:
+  // "runtime", "dev", "test", "optional", or "" (unknown, treated as runtime).
+  string dep_type = 3;
+  // ecosystem identifies which ecosystem this dependency belongs to.
+  Ecosystem ecosystem = 4;
+}
+
 // AnalyzeRequest is the single input type for the Analyze RPC.
 // Used by both the plugin host (Phase 2) and the standalone runner (Phase 4);
 // there is exactly one request type — no divergent advisory plumbing.
@@ -303,6 +324,19 @@ message AnalyzeRequest {
   // Optional and additive: Go/JS plugins ignore this field. New language plugins
   // (Rust, Python) use this instead of overloading the Go-specific build_config.
   EcosystemBuildConfig ecosystem_build_config = 5;
+
+  // resolved_deps is the host's already-parsed dependency closure for
+  // lockfile-static ecosystems. A lockfile-backed reachability plugin consumes
+  // this closure instead of re-parsing the lockfile. Optional and additive:
+  // older plugins ignore it and resolve their own closure.
+  repeated ResolvedDependency resolved_deps = 6;
+
+  // closure_incomplete is true when any host-side adapter returned a partial
+  // closure (complete=false). When true, a plugin MUST NOT emit NOT_REACHABLE:
+  // a package that appears unreferenced could still be pulled in by an
+  // unresolved transitive dependency. This is the wire-level guard against a
+  // false NOT_REACHABLE proven over an incomplete closure ("unknown ≠ safe").
+  bool closure_incomplete = 7;
 }
 
 // ─── Metadata Messages ───────────────────────────────────────────────────────

@@ -961,6 +961,88 @@ func (x *EcosystemBuildConfig) GetExtraEnv() map[string]string {
 	return nil
 }
 
+// ResolvedDependency is one entry in the host's already-parsed dependency
+// closure for a lockfile-static ecosystem. The host resolves the closure from
+// the project's lockfile and passes it to the reachability plugin so the plugin
+// consumes the closure directly and never re-parses the lockfile in its own
+// language (DRY + smaller ACE surface: seven parsers already exist host-side).
+//
+// This message is optional and additive: plugins that predate it ignore the
+// resolved_deps field entirely (they resolve their own closure). New
+// lockfile-backed plugins advertise protocol minor >= 2 and consume it.
+type ResolvedDependency struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// name is the ecosystem-specific package name (e.g. "org.springframework:spring-core").
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// version is the resolved version string from the lockfile.
+	Version string `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
+	// dep_type is the dependency classification from the lockfile:
+	// "runtime", "dev", "test", "optional", or "" (unknown, treated as runtime).
+	DepType string `protobuf:"bytes,3,opt,name=dep_type,json=depType,proto3" json:"dep_type,omitempty"`
+	// ecosystem identifies which ecosystem this dependency belongs to.
+	Ecosystem     Ecosystem `protobuf:"varint,4,opt,name=ecosystem,proto3,enum=commit0.v1.Ecosystem" json:"ecosystem,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResolvedDependency) Reset() {
+	*x = ResolvedDependency{}
+	mi := &file_commit0_v1_plugin_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResolvedDependency) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResolvedDependency) ProtoMessage() {}
+
+func (x *ResolvedDependency) ProtoReflect() protoreflect.Message {
+	mi := &file_commit0_v1_plugin_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResolvedDependency.ProtoReflect.Descriptor instead.
+func (*ResolvedDependency) Descriptor() ([]byte, []int) {
+	return file_commit0_v1_plugin_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ResolvedDependency) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ResolvedDependency) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *ResolvedDependency) GetDepType() string {
+	if x != nil {
+		return x.DepType
+	}
+	return ""
+}
+
+func (x *ResolvedDependency) GetEcosystem() Ecosystem {
+	if x != nil {
+		return x.Ecosystem
+	}
+	return Ecosystem_ECOSYSTEM_UNKNOWN
+}
+
 // AnalyzeRequest is the single input type for the Analyze RPC.
 // Used by both the plugin host (Phase 2) and the standalone runner (Phase 4);
 // there is exactly one request type — no divergent advisory plumbing.
@@ -980,13 +1062,24 @@ type AnalyzeRequest struct {
 	// Optional and additive: Go/JS plugins ignore this field. New language plugins
 	// (Rust, Python) use this instead of overloading the Go-specific build_config.
 	EcosystemBuildConfig *EcosystemBuildConfig `protobuf:"bytes,5,opt,name=ecosystem_build_config,json=ecosystemBuildConfig,proto3" json:"ecosystem_build_config,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// resolved_deps is the host's already-parsed dependency closure for
+	// lockfile-static ecosystems. A lockfile-backed reachability plugin consumes
+	// this closure instead of re-parsing the lockfile. Optional and additive:
+	// older plugins ignore it and resolve their own closure.
+	ResolvedDeps []*ResolvedDependency `protobuf:"bytes,6,rep,name=resolved_deps,json=resolvedDeps,proto3" json:"resolved_deps,omitempty"`
+	// closure_incomplete is true when any host-side adapter returned a partial
+	// closure (complete=false). When true, a plugin MUST NOT emit NOT_REACHABLE:
+	// a package that appears unreferenced could still be pulled in by an
+	// unresolved transitive dependency. This is the wire-level guard against a
+	// false NOT_REACHABLE proven over an incomplete closure ("unknown ≠ safe").
+	ClosureIncomplete bool `protobuf:"varint,7,opt,name=closure_incomplete,json=closureIncomplete,proto3" json:"closure_incomplete,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *AnalyzeRequest) Reset() {
 	*x = AnalyzeRequest{}
-	mi := &file_commit0_v1_plugin_proto_msgTypes[9]
+	mi := &file_commit0_v1_plugin_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -998,7 +1091,7 @@ func (x *AnalyzeRequest) String() string {
 func (*AnalyzeRequest) ProtoMessage() {}
 
 func (x *AnalyzeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_commit0_v1_plugin_proto_msgTypes[9]
+	mi := &file_commit0_v1_plugin_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1011,7 +1104,7 @@ func (x *AnalyzeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AnalyzeRequest.ProtoReflect.Descriptor instead.
 func (*AnalyzeRequest) Descriptor() ([]byte, []int) {
-	return file_commit0_v1_plugin_proto_rawDescGZIP(), []int{9}
+	return file_commit0_v1_plugin_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *AnalyzeRequest) GetModuleRoot() string {
@@ -1049,6 +1142,20 @@ func (x *AnalyzeRequest) GetEcosystemBuildConfig() *EcosystemBuildConfig {
 	return nil
 }
 
+func (x *AnalyzeRequest) GetResolvedDeps() []*ResolvedDependency {
+	if x != nil {
+		return x.ResolvedDeps
+	}
+	return nil
+}
+
+func (x *AnalyzeRequest) GetClosureIncomplete() bool {
+	if x != nil {
+		return x.ClosureIncomplete
+	}
+	return false
+}
+
 // MetadataRequest is sent by the host to identify itself during the handshake.
 type MetadataRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1060,7 +1167,7 @@ type MetadataRequest struct {
 
 func (x *MetadataRequest) Reset() {
 	*x = MetadataRequest{}
-	mi := &file_commit0_v1_plugin_proto_msgTypes[10]
+	mi := &file_commit0_v1_plugin_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1072,7 +1179,7 @@ func (x *MetadataRequest) String() string {
 func (*MetadataRequest) ProtoMessage() {}
 
 func (x *MetadataRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_commit0_v1_plugin_proto_msgTypes[10]
+	mi := &file_commit0_v1_plugin_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1085,7 +1192,7 @@ func (x *MetadataRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetadataRequest.ProtoReflect.Descriptor instead.
 func (*MetadataRequest) Descriptor() ([]byte, []int) {
-	return file_commit0_v1_plugin_proto_rawDescGZIP(), []int{10}
+	return file_commit0_v1_plugin_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *MetadataRequest) GetHostVersion() string {
@@ -1115,7 +1222,7 @@ type MetadataResponse struct {
 
 func (x *MetadataResponse) Reset() {
 	*x = MetadataResponse{}
-	mi := &file_commit0_v1_plugin_proto_msgTypes[11]
+	mi := &file_commit0_v1_plugin_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1127,7 +1234,7 @@ func (x *MetadataResponse) String() string {
 func (*MetadataResponse) ProtoMessage() {}
 
 func (x *MetadataResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_commit0_v1_plugin_proto_msgTypes[11]
+	mi := &file_commit0_v1_plugin_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1140,7 +1247,7 @@ func (x *MetadataResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetadataResponse.ProtoReflect.Descriptor instead.
 func (*MetadataResponse) Descriptor() ([]byte, []int) {
-	return file_commit0_v1_plugin_proto_rawDescGZIP(), []int{11}
+	return file_commit0_v1_plugin_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *MetadataResponse) GetName() string {
@@ -1241,7 +1348,12 @@ const file_commit0_v1_plugin_proto_rawDesc = "" +
 	"\textra_env\x18\x05 \x03(\v2..commit0.v1.EcosystemBuildConfig.ExtraEnvEntryR\bextraEnv\x1a;\n" +
 	"\rExtraEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9d\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x92\x01\n" +
+	"\x12ResolvedDependency\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
+	"\aversion\x18\x02 \x01(\tR\aversion\x12\x19\n" +
+	"\bdep_type\x18\x03 \x01(\tR\adepType\x123\n" +
+	"\tecosystem\x18\x04 \x01(\x0e2\x15.commit0.v1.EcosystemR\tecosystem\"\x91\x03\n" +
 	"\x0eAnalyzeRequest\x12\x1f\n" +
 	"\vmodule_root\x18\x01 \x01(\tR\n" +
 	"moduleRoot\x12 \n" +
@@ -1250,7 +1362,9 @@ const file_commit0_v1_plugin_proto_rawDesc = "" +
 	"\n" +
 	"advisories\x18\x04 \x03(\v2\x14.commit0.v1.AdvisoryR\n" +
 	"advisories\x12V\n" +
-	"\x16ecosystem_build_config\x18\x05 \x01(\v2 .commit0.v1.EcosystemBuildConfigR\x14ecosystemBuildConfig\"4\n" +
+	"\x16ecosystem_build_config\x18\x05 \x01(\v2 .commit0.v1.EcosystemBuildConfigR\x14ecosystemBuildConfig\x12C\n" +
+	"\rresolved_deps\x18\x06 \x03(\v2\x1e.commit0.v1.ResolvedDependencyR\fresolvedDeps\x12-\n" +
+	"\x12closure_incomplete\x18\a \x01(\bR\x11closureIncomplete\"4\n" +
 	"\x0fMetadataRequest\x12!\n" +
 	"\fhost_version\x18\x01 \x01(\tR\vhostVersion\"\xbe\x01\n" +
 	"\x10MetadataResponse\x12\x12\n" +
@@ -1295,7 +1409,7 @@ func file_commit0_v1_plugin_proto_rawDescGZIP() []byte {
 }
 
 var file_commit0_v1_plugin_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_commit0_v1_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_commit0_v1_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_commit0_v1_plugin_proto_goTypes = []any{
 	(Ecosystem)(0),               // 0: commit0.v1.Ecosystem
 	(Confidence)(0),              // 1: commit0.v1.Confidence
@@ -1309,11 +1423,12 @@ var file_commit0_v1_plugin_proto_goTypes = []any{
 	(*Advisory)(nil),             // 9: commit0.v1.Advisory
 	(*BuildConfig)(nil),          // 10: commit0.v1.BuildConfig
 	(*EcosystemBuildConfig)(nil), // 11: commit0.v1.EcosystemBuildConfig
-	(*AnalyzeRequest)(nil),       // 12: commit0.v1.AnalyzeRequest
-	(*MetadataRequest)(nil),      // 13: commit0.v1.MetadataRequest
-	(*MetadataResponse)(nil),     // 14: commit0.v1.MetadataResponse
-	nil,                          // 15: commit0.v1.Finding.PropertiesEntry
-	nil,                          // 16: commit0.v1.EcosystemBuildConfig.ExtraEnvEntry
+	(*ResolvedDependency)(nil),   // 12: commit0.v1.ResolvedDependency
+	(*AnalyzeRequest)(nil),       // 13: commit0.v1.AnalyzeRequest
+	(*MetadataRequest)(nil),      // 14: commit0.v1.MetadataRequest
+	(*MetadataResponse)(nil),     // 15: commit0.v1.MetadataResponse
+	nil,                          // 16: commit0.v1.Finding.PropertiesEntry
+	nil,                          // 17: commit0.v1.EcosystemBuildConfig.ExtraEnvEntry
 }
 var file_commit0_v1_plugin_proto_depIdxs = []int32{
 	3,  // 0: commit0.v1.CallStep.location:type_name -> commit0.v1.Location
@@ -1322,24 +1437,26 @@ var file_commit0_v1_plugin_proto_depIdxs = []int32{
 	1,  // 3: commit0.v1.Finding.confidence:type_name -> commit0.v1.Confidence
 	2,  // 4: commit0.v1.Finding.severity:type_name -> commit0.v1.Severity
 	5,  // 5: commit0.v1.Finding.path:type_name -> commit0.v1.ReachabilityPath
-	15, // 6: commit0.v1.Finding.properties:type_name -> commit0.v1.Finding.PropertiesEntry
+	16, // 6: commit0.v1.Finding.properties:type_name -> commit0.v1.Finding.PropertiesEntry
 	0,  // 7: commit0.v1.Finding.ecosystem:type_name -> commit0.v1.Ecosystem
 	8,  // 8: commit0.v1.Advisory.symbols:type_name -> commit0.v1.Symbol
 	0,  // 9: commit0.v1.Advisory.ecosystem:type_name -> commit0.v1.Ecosystem
 	0,  // 10: commit0.v1.EcosystemBuildConfig.ecosystem:type_name -> commit0.v1.Ecosystem
-	16, // 11: commit0.v1.EcosystemBuildConfig.extra_env:type_name -> commit0.v1.EcosystemBuildConfig.ExtraEnvEntry
-	10, // 12: commit0.v1.AnalyzeRequest.build_config:type_name -> commit0.v1.BuildConfig
-	9,  // 13: commit0.v1.AnalyzeRequest.advisories:type_name -> commit0.v1.Advisory
-	11, // 14: commit0.v1.AnalyzeRequest.ecosystem_build_config:type_name -> commit0.v1.EcosystemBuildConfig
-	13, // 15: commit0.v1.Analyzer.Metadata:input_type -> commit0.v1.MetadataRequest
-	12, // 16: commit0.v1.Analyzer.Analyze:input_type -> commit0.v1.AnalyzeRequest
-	14, // 17: commit0.v1.Analyzer.Metadata:output_type -> commit0.v1.MetadataResponse
-	7,  // 18: commit0.v1.Analyzer.Analyze:output_type -> commit0.v1.Finding
-	17, // [17:19] is the sub-list for method output_type
-	15, // [15:17] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	17, // 11: commit0.v1.EcosystemBuildConfig.extra_env:type_name -> commit0.v1.EcosystemBuildConfig.ExtraEnvEntry
+	0,  // 12: commit0.v1.ResolvedDependency.ecosystem:type_name -> commit0.v1.Ecosystem
+	10, // 13: commit0.v1.AnalyzeRequest.build_config:type_name -> commit0.v1.BuildConfig
+	9,  // 14: commit0.v1.AnalyzeRequest.advisories:type_name -> commit0.v1.Advisory
+	11, // 15: commit0.v1.AnalyzeRequest.ecosystem_build_config:type_name -> commit0.v1.EcosystemBuildConfig
+	12, // 16: commit0.v1.AnalyzeRequest.resolved_deps:type_name -> commit0.v1.ResolvedDependency
+	14, // 17: commit0.v1.Analyzer.Metadata:input_type -> commit0.v1.MetadataRequest
+	13, // 18: commit0.v1.Analyzer.Analyze:input_type -> commit0.v1.AnalyzeRequest
+	15, // 19: commit0.v1.Analyzer.Metadata:output_type -> commit0.v1.MetadataResponse
+	7,  // 20: commit0.v1.Analyzer.Analyze:output_type -> commit0.v1.Finding
+	19, // [19:21] is the sub-list for method output_type
+	17, // [17:19] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_commit0_v1_plugin_proto_init() }
@@ -1353,7 +1470,7 @@ func file_commit0_v1_plugin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_commit0_v1_plugin_proto_rawDesc), len(file_commit0_v1_plugin_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   14,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
