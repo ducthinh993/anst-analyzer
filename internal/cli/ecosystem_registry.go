@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/commit0-dev/commit0-analyzer/internal/advisory"
+	"github.com/commit0-dev/commit0-analyzer/internal/analyzer"
 )
 
 // ResolvedDep is a single dependency from a lockfile-static parse.
@@ -147,6 +148,18 @@ type EcosystemAdapter struct {
 	// --language taxonomy value (e.g. "dart", "java"). Only consulted when
 	// HasPlugin is true; when empty it defaults to Language.
 	PluginName string
+
+	// Analyzer is the in-tree, in-process reachability analyzer for this adapter
+	// (nil = no reachability stage; the direct lockfile PACKAGE_REACHABLE path is
+	// used). It is the in-tree graduation path and SUPERSEDES the subprocess
+	// HasPlugin/PluginName machinery: the host runs the analyzer as a function call
+	// (internal/analyzer.Run) with the same fail-closed crash semantics as the
+	// subprocess host, hands it the host-parsed closure, and routes it only the
+	// advisories for the ecosystems it owns. Like HasPlugin, a graduated adapter
+	// KEEPS its ParseLockfile as the authoritative closure source; MaxConfidence
+	// STAYS ceilingPackage (the analyzer proves NOT_REACHABLE below the package
+	// tier, never SYMBOL_REACHABLE above it).
+	Analyzer analyzer.Analyzer
 }
 
 // pluginBaseName returns the plugin directory/binary base name for a graduated
@@ -242,22 +255,47 @@ var ecosystemRegistry = []EcosystemAdapter{
 	},
 }
 
+// init validates the seeded var-literal entries (Go/JS/Rust/Python), which are
+// appended directly to ecosystemRegistry and so bypass RegisterEcosystemAdapter's
+// guards. Without this, a soundness-violating edit to the literal (e.g. a symbol
+// ceiling on a lockfile adapter) would ship silently. Lockfile adapters register
+// via RegisterEcosystemAdapter (their own init) and are validated there.
+func init() {
+	for _, a := range ecosystemRegistry {
+		validateAdapterInvariants(a)
+	}
+}
+
 // RegisterEcosystemAdapter appends an adapter to the global registry.
 // Must be called only from init() functions (before any concurrent use).
-//
-// It panics on a soundness-violating registration rather than degrade quietly:
-//   - A Language missing from orderedLanguages would be detectable
-//     (DetectFiles) yet invisible to warnUnsupportedEcosystems, so a project
-//     using it could scan nothing and still exit 0 — a silent false-clean.
-//   - A lockfile-static adapter (ParseLockfile != nil) claiming a symbol
-//     ceiling would stamp SYMBOL_REACHABLE on findings without any call-graph
-//     proof; lockfile parsing can only ever establish package presence. This
-//     holds whether or not the adapter has graduated to a plugin: a graduated
-//     plugin adds NOT_REACHABLE *below* the package tier, never SYMBOL above it.
-//   - A graduated adapter (HasPlugin) with a nil ParseLockfile has no closure
-//     source to hand the plugin — the host would send an empty resolved_deps and
-//     the plugin could emit a false NOT_REACHABLE over a closure it never saw.
+// It panics on a soundness-violating registration (see validateAdapterInvariants)
+// rather than degrade quietly.
 func RegisterEcosystemAdapter(a EcosystemAdapter) {
+	validateAdapterInvariants(a)
+	ecosystemRegistry = append(ecosystemRegistry, a)
+}
+
+// validateAdapterInvariants panics when an adapter would violate a soundness
+// invariant. It is the single gate for BOTH registration paths (the seeded
+// var-literal entries via init, and lockfile adapters via
+// RegisterEcosystemAdapter), so no entry can bypass the guards:
+//   - A Language missing from orderedLanguages would be detectable (DetectFiles)
+//     yet invisible to warnUnsupportedEcosystems, so a project using it could scan
+//     nothing and still exit 0 — a silent false-clean.
+//   - A lockfile-static adapter (ParseLockfile != nil) claiming a symbol ceiling
+//     would stamp SYMBOL_REACHABLE on findings without any call-graph proof;
+//     lockfile parsing can only ever establish package presence. This holds
+//     whether or not the adapter has graduated: graduation adds NOT_REACHABLE
+//     *below* the package tier, never SYMBOL above it.
+//   - A graduated adapter (HasPlugin or Analyzer) with a nil ParseLockfile has no
+//     closure source to hand its reachability stage — it would receive an empty
+//     closure and could emit a false NOT_REACHABLE over a closure it never saw.
+//   - An adapter setting BOTH HasPlugin (subprocess) and Analyzer (in-process)
+//     is contradictory: the manifest-build path keys on HasPlugin while the
+//     lockfile loop routes the closure to the in-process analyzer, so the
+//     subprocess plugin would run with an EMPTY resolved_deps closure (false
+//     NOT_REACHABLE hazard) AND both transports would emit duplicate findings.
+func validateAdapterInvariants(a EcosystemAdapter) {
 	if !isKnownLanguage(a.Language) {
 		panic(fmt.Sprintf(
 			"RegisterEcosystemAdapter: language %q is not listed in orderedLanguages; "+
@@ -271,6 +309,15 @@ func RegisterEcosystemAdapter(a EcosystemAdapter) {
 				"ceilingPackage; lockfile parsing cannot prove symbol-level reachability",
 			a.Language))
 	}
+	if a.HasPlugin && a.Analyzer != nil {
+		panic(fmt.Sprintf(
+			"RegisterEcosystemAdapter: adapter %q sets both HasPlugin (subprocess) and "+
+				"Analyzer (in-process); the manifest-build path keys on HasPlugin while the "+
+				"lockfile loop routes the closure to the in-process analyzer, so the subprocess "+
+				"plugin would run with an EMPTY resolved_deps closure (false NOT_REACHABLE hazard) "+
+				"and both transports would emit duplicate findings — pick exactly one transport",
+			a.Language))
+	}
 	if a.HasPlugin && a.ParseLockfile == nil {
 		panic(fmt.Sprintf(
 			"RegisterEcosystemAdapter: graduated adapter %q (HasPlugin) must keep "+
@@ -278,7 +325,13 @@ func RegisterEcosystemAdapter(a EcosystemAdapter) {
 				"parser would send the plugin an empty closure and risk a false NOT_REACHABLE",
 			a.Language))
 	}
-	ecosystemRegistry = append(ecosystemRegistry, a)
+	if a.Analyzer != nil && a.ParseLockfile == nil {
+		panic(fmt.Sprintf(
+			"RegisterEcosystemAdapter: in-process analyzer adapter %q must keep its "+
+				"ParseLockfile as the closure source the analyzer consumes; a nil parser "+
+				"would hand the analyzer an empty closure and risk a false NOT_REACHABLE",
+			a.Language))
+	}
 }
 
 // EcosystemAdapters returns a snapshot of every registered adapter.
@@ -302,6 +355,26 @@ func lockfileAdapters() []EcosystemAdapter {
 	for _, a := range ecosystemRegistry {
 		if a.ParseLockfile != nil {
 			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// ecosystemsForLanguages maps a plugin manifest's Languages to the OSV ecosystem
+// names those languages resolve to, via the adapter registry. It is the routing
+// key for a subprocess plugin: the host hands the plugin only the advisories for
+// the ecosystems it owns (a plugin with Languages ["js","ts"] receives only "npm"
+// advisories, never a Go or Pub advisory). A language with no registered adapter
+// (e.g. "ts", an alias carrying no distinct ecosystem) contributes nothing.
+func ecosystemsForLanguages(langs []string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, l := range langs {
+		for _, a := range ecosystemRegistry {
+			if a.Language == l && a.Ecosystem != "" && !seen[a.Ecosystem] {
+				seen[a.Ecosystem] = true
+				out = append(out, a.Ecosystem)
+			}
 		}
 	}
 	return out

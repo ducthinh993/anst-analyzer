@@ -26,7 +26,7 @@ func buildLockfileTestPlugin(t *testing.T) string {
 		bin += ".exe"
 	}
 	cmd := exec.Command("go", "build", "-o", bin,
-		"github.com/commit0-dev/commit0-analyzer/plugins/lockfilekit/testplugin")
+		"github.com/commit0-dev/commit0-analyzer/internal/analyzer/lockfilekit/testplugin")
 	cmd.Env = os.Environ()
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "build lockfilekit test plugin:\n%s", out)

@@ -1,11 +1,11 @@
-package engine
+package pub
 
 import (
 	"os"
 	"path/filepath"
 
-	"github.com/commit0-dev/commit0-analyzer/plugins/lockfilekit"
-	"github.com/commit0-dev/commit0-analyzer/plugins/pub-reachability/internal/dartimports"
+	"github.com/commit0-dev/commit0-analyzer/internal/analyzer/lockfilekit"
+	"github.com/commit0-dev/commit0-analyzer/internal/analyzer/pub/dartimports"
 )
 
 const (
