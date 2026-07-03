@@ -1,11 +1,11 @@
-package engine
+package pub
 
 import (
 	"path/filepath"
 	"testing"
 
 	commit0v1 "github.com/commit0-dev/commit0-analyzer/pkg/contract/commit0v1"
-	"github.com/commit0-dev/commit0-analyzer/plugins/lockfilekit/corpus"
+	"github.com/commit0-dev/commit0-analyzer/internal/analyzer/lockfilekit/corpus"
 )
 
 // analyzerFor adapts engine.Analyzer to the corpus.Analyzer shape, baking in the

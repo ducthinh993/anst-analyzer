@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/commit0-dev/commit0-analyzer/internal/advisory"
+	"github.com/commit0-dev/commit0-analyzer/internal/analyzer"
 )
 
 // ResolvedDep is a single dependency from a lockfile-static parse.
@@ -147,6 +148,18 @@ type EcosystemAdapter struct {
 	// --language taxonomy value (e.g. "dart", "java"). Only consulted when
 	// HasPlugin is true; when empty it defaults to Language.
 	PluginName string
+
+	// Analyzer is the in-tree, in-process reachability analyzer for this adapter
+	// (nil = no reachability stage; the direct lockfile PACKAGE_REACHABLE path is
+	// used). It is the in-tree graduation path and SUPERSEDES the subprocess
+	// HasPlugin/PluginName machinery: the host runs the analyzer as a function call
+	// (internal/analyzer.Run) with the same fail-closed crash semantics as the
+	// subprocess host, hands it the host-parsed closure, and routes it only the
+	// advisories for the ecosystems it owns. Like HasPlugin, a graduated adapter
+	// KEEPS its ParseLockfile as the authoritative closure source; MaxConfidence
+	// STAYS ceilingPackage (the analyzer proves NOT_REACHABLE below the package
+	// tier, never SYMBOL_REACHABLE above it).
+	Analyzer analyzer.Analyzer
 }
 
 // pluginBaseName returns the plugin directory/binary base name for a graduated
@@ -278,6 +291,13 @@ func RegisterEcosystemAdapter(a EcosystemAdapter) {
 				"parser would send the plugin an empty closure and risk a false NOT_REACHABLE",
 			a.Language))
 	}
+	if a.Analyzer != nil && a.ParseLockfile == nil {
+		panic(fmt.Sprintf(
+			"RegisterEcosystemAdapter: in-process analyzer adapter %q must keep its "+
+				"ParseLockfile as the closure source the analyzer consumes; a nil parser "+
+				"would hand the analyzer an empty closure and risk a false NOT_REACHABLE",
+			a.Language))
+	}
 	ecosystemRegistry = append(ecosystemRegistry, a)
 }
 
@@ -302,6 +322,26 @@ func lockfileAdapters() []EcosystemAdapter {
 	for _, a := range ecosystemRegistry {
 		if a.ParseLockfile != nil {
 			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// ecosystemsForLanguages maps a plugin manifest's Languages to the OSV ecosystem
+// names those languages resolve to, via the adapter registry. It is the routing
+// key for a subprocess plugin: the host hands the plugin only the advisories for
+// the ecosystems it owns (a plugin with Languages ["js","ts"] receives only "npm"
+// advisories, never a Go or Pub advisory). A language with no registered adapter
+// (e.g. "ts", an alias carrying no distinct ecosystem) contributes nothing.
+func ecosystemsForLanguages(langs []string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, l := range langs {
+		for _, a := range ecosystemRegistry {
+			if a.Language == l && a.Ecosystem != "" && !seen[a.Ecosystem] {
+				seen[a.Ecosystem] = true
+				out = append(out, a.Ecosystem)
+			}
 		}
 	}
 	return out

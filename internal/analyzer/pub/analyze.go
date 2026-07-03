@@ -1,9 +1,12 @@
-// Package engine decides package-level reachability for the Dart/Pub plugin.
+// Package pub is the in-process Dart/Pub reachability analyzer. It plugs into the
+// host through the analyzer.Analyzer seam (no subprocess, no gRPC): the host owns
+// advisory data and the resolved pubspec.lock closure, and this package adds the
+// one reachability tier lockfile parsing cannot — package-level NOT_REACHABLE.
 //
 // # What it proves
 //
 // The host already resolves the pubspec.lock closure and emits PACKAGE_REACHABLE.
-// This engine's only new value is NOT_REACHABLE: an advisory package that is in
+// This analyzer's only new value is NOT_REACHABLE: an advisory package that is in
 // the closure but provably never referenced in the project's transitive
 // used-import closure, with an empty dynamism frontier.
 //
@@ -24,7 +27,7 @@
 // Mapping is the identity function (a `package:NAME/...` URI literally names its
 // package), so there is no artifact download, no version lookup, and mapping is
 // never unknown.
-package engine
+package pub
 
 import (
 	"fmt"

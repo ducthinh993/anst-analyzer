@@ -1,5 +1,5 @@
-// Command standalone is a thin CLI runner for the pub-reachability engine. It
-// constructs an AnalyzeRequest from flags and prints findings as JSON. Used for
+// Command standalone is a thin CLI runner for the in-process Dart/Pub analyzer.
+// It runs the analyzer over a project root and prints findings as JSON. Used for
 // development, the corpus gate, and real-repo empirical validation.
 //
 // Usage:
@@ -16,7 +16,7 @@ import (
 	"os"
 
 	commit0v1 "github.com/commit0-dev/commit0-analyzer/pkg/contract/commit0v1"
-	"github.com/commit0-dev/commit0-analyzer/plugins/pub-reachability/internal/engine"
+	"github.com/commit0-dev/commit0-analyzer/internal/analyzer/pub"
 )
 
 func main() {
@@ -57,7 +57,7 @@ func run() error {
 		advisories = append(advisories, &commit0v1.Advisory{Id: id, Module: *advModule})
 	}
 
-	a := &engine.Analyzer{
+	a := &pub.Analyzer{
 		Root:              *moduleRoot,
 		Advisories:        advisories,
 		ClosureIncomplete: *closureIncomplete,

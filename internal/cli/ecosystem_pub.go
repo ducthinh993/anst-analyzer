@@ -54,6 +54,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/commit0-dev/commit0-analyzer/internal/advisory"
+	"github.com/commit0-dev/commit0-analyzer/internal/analyzer/pub"
 )
 
 func init() {
@@ -69,18 +70,15 @@ func init() {
 		DetectFiles:   []string{"pubspec.lock", "pubspec.yaml"},
 		MaxConfidence: ceilingPackage,
 		ParseLockfile: parsePubspecLock,
-		// HasPlugin graduates Pub to the plugin-backed path: the host keeps
-		// parsing pubspec.lock (the closure source, ParseLockfile above) and passes
-		// that closure to the reachability plugin, which can additionally prove
+		// Analyzer graduates Pub to the in-process reachability path: the host keeps
+		// parsing pubspec.lock (the closure source, ParseLockfile above) and hands
+		// that closure to the in-tree Dart analyzer, which additionally proves
 		// package-level NOT_REACHABLE (advisory package present in the closure but
 		// provably never in the project's used-import closure) → VEX not_affected.
-		// When the plugin binary is absent or fails to build, the host falls back
-		// to the direct PACKAGE_REACHABLE finding (never a silent skip).
-		HasPlugin: true,
-		// PluginName pins the plugin base name so the manifest derives
-		// plugins/pub-reachability/ and the binary commit0-pub-reachability
-		// (distinct from Language "dart", which is the ecosystem's language tag).
-		PluginName: "pub",
+		// The analyzer is compiled into the host binary — there is no subprocess,
+		// no on-demand build, and no "plugin absent" fallback. A panic or timeout
+		// degrades to synthetic UNKNOWN (never a silent skip).
+		Analyzer: pub.New(),
 		// NormalizeName is nil: Pub package names on pub.dev are lowercase and
 		// case-sensitive. The OSV Pub index records use the same canonical form
 		// as the names stored in pubspec.lock. No normalization is required.

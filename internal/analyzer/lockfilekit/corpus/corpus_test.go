@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	commit0v1 "github.com/commit0-dev/commit0-analyzer/pkg/contract/commit0v1"
-	"github.com/commit0-dev/commit0-analyzer/plugins/lockfilekit"
-	"github.com/commit0-dev/commit0-analyzer/plugins/lockfilekit/corpus"
+	"github.com/commit0-dev/commit0-analyzer/internal/analyzer/lockfilekit"
+	"github.com/commit0-dev/commit0-analyzer/internal/analyzer/lockfilekit/corpus"
 )
 
 // wordParse splits source into letter-run tokens; it always succeeds.

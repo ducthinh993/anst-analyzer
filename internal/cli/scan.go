@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/commit0-dev/commit0-analyzer/internal/advisory"
 	"github.com/commit0-dev/commit0-analyzer/internal/advisory/ghfetch"
 	"github.com/commit0-dev/commit0-analyzer/internal/advisory/symbolindex"
+	"github.com/commit0-dev/commit0-analyzer/internal/analyzer"
 	"github.com/commit0-dev/commit0-analyzer/internal/host"
 	"github.com/commit0-dev/commit0-analyzer/internal/policy"
 	"github.com/commit0-dev/commit0-analyzer/internal/render"
@@ -404,6 +406,20 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 	incomplete := false
 	var namedSources []advisory.NamedSource
 	var protoAdvs []*commit0v1.Advisory
+	// advsByEco buckets every resolved proto advisory by its owning OSV ecosystem
+	// (the ecosystem of the resolve loop that produced it). The wire Advisory does
+	// not carry an ecosystem discriminator for every ecosystem (no proto enum for
+	// Pub, NuGet, …), so ecosystem ownership is captured here at resolve time. It
+	// is the routing key: each analyzer (in-process) and each subprocess plugin
+	// receives only the advisories for the ecosystems it owns, so no analyzer sees
+	// an advisory outside its ecosystem. captureEcoAdvs records the slice each
+	// resolveDepAdvisories call appended.
+	advsByEco := map[string][]*commit0v1.Advisory{}
+	captureEcoAdvs := func(eco string, before int) {
+		if len(protoAdvs) > before {
+			advsByEco[eco] = append(advsByEco[eco], protoAdvs[before:]...)
+		}
+	}
 	sourcesByID := map[string][]string{}
 	// severityByID maps advisory ID → advisory.Severity (CVSS-derived).
 	// Populated alongside sourcesByID; used in stampAdvisorySeverity after
@@ -578,6 +594,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 				Desc:            desc,
 			}
 		}
+		goAdvsBefore := len(protoAdvs)
 		resolveDepAdvisories(ctx, advisoryResolution{
 			Ecosystem:    advisory.EcosystemGo,
 			Source:       multiSrc,
@@ -595,6 +612,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 				}
 			},
 		}, goDeps)
+		captureEcoAdvs(advisory.EcosystemGo, goAdvsBefore)
 	}
 
 	// ── 5b. npm advisory resolution (JS ecosystem) ───────────────────────────
@@ -760,7 +778,9 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 						}
 					}
 				}
+				npmAdvsBefore := len(protoAdvs)
 				resolveDepAdvisories(ctx, npmRes, npmResolveDeps)
+				captureEcoAdvs(advisory.EcosystemNPM, npmAdvsBefore)
 			}
 		}
 	}
@@ -874,6 +894,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 						Desc:            desc,
 					}
 				}
+				cratesAdvsBefore := len(protoAdvs)
 				resolveDepAdvisories(ctx, advisoryResolution{
 					Ecosystem:    advisory.EcosystemCratesIO,
 					Source:       cratesMultiSrc,
@@ -891,6 +912,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 						}
 					},
 				}, cratesResolveDeps)
+				captureEcoAdvs(advisory.EcosystemCratesIO, cratesAdvsBefore)
 			}
 		}
 	}
@@ -1010,6 +1032,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 						Desc:            desc,
 					}
 				}
+				pypiAdvsBefore := len(protoAdvs)
 				resolveDepAdvisories(ctx, advisoryResolution{
 					Ecosystem:    advisory.EcosystemPyPI,
 					Source:       pypiMultiSrc,
@@ -1030,6 +1053,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 						}
 					},
 				}, pypiResolveDeps)
+				captureEcoAdvs(advisory.EcosystemPyPI, pypiAdvsBefore)
 			}
 		}
 	}
@@ -1105,10 +1129,15 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 		}
 	}
 
-	// Accumulators for the host's parsed closure handed to graduated plugins via
-	// AnalyzeRequest.resolved_deps / closure_incomplete (see step 6).
+	// Accumulators for the host's parsed closure handed to graduated subprocess
+	// plugins via AnalyzeRequest.resolved_deps / closure_incomplete (see step 6).
 	var lockfileResolvedDeps []*commit0v1.ResolvedDependency
 	lockfileClosureIncomplete := false
+
+	// inProcRuns collects the in-process analyzers (EcosystemAdapter.Analyzer != nil)
+	// that own an in-scope lockfile ecosystem, each with the host-parsed closure it
+	// consumes. They are dispatched in step 7 with advisories routed by ecosystem.
+	var inProcRuns []inProcRun
 
 	var lockfileFindings []*commit0v1.Finding
 	for _, lockfileAdapter := range lockfileAdapters() {
@@ -1179,14 +1208,27 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 		// "runtime" wins when the same dep has different DepTypes across sub-projects.
 		deps := dedupLockfileDeps(aggDeps, lockfileAdapter.NormalizeName)
 
-		// Decide whether to defer this ecosystem's finding to a reachability
-		// plugin. When a plugin will run for it, suppress the direct finding and
-		// hand the plugin the parsed closure via resolved_deps so it never
-		// re-parses the lockfile; a partial closure sets closure_incomplete, which
-		// forbids the plugin from emitting NOT_REACHABLE ("unknown ≠ safe").
+		// Decide whether to defer this ecosystem's finding to a reachability stage
+		// (in-process analyzer or subprocess plugin). When one will run, suppress the
+		// direct finding and hand it the parsed closure so it never re-parses the
+		// lockfile; a partial closure forbids a NOT_REACHABLE verdict ("unknown ≠
+		// safe"). --skip-reachability-analysis disables both, falling back to the
+		// direct PACKAGE_REACHABLE finding.
+		//
+		// The in-process analyzer (Analyzer != nil) is the in-tree graduation path
+		// and always runs (compiled into the host) — there is no "binary absent"
+		// fallback; a panic or timeout degrades to synthetic UNKNOWN (step 7).
+		inProcess := lockfileAdapter.Analyzer != nil && !flags.skipReachabilityAnalysis
 		pluginWillRun := lockfilePluginManifests[lockfileAdapter.Language] != nil
-		suppressDirect := suppressDirectLockfileFinding(lockfileAdapter, pluginWillRun)
-		if suppressDirect {
+		suppressDirect := inProcess || suppressDirectLockfileFinding(lockfileAdapter, pluginWillRun)
+		if inProcess {
+			inProcRuns = append(inProcRuns, inProcRun{
+				analyzer:          lockfileAdapter.Analyzer,
+				closure:           resolvedDepsForAdapter(lockfileAdapter, deps),
+				closureIncomplete: !aggComplete,
+			})
+		} else if suppressDirect {
+			// Subprocess (HasPlugin) path: the closure crosses the wire as resolved_deps.
 			lockfileResolvedDeps = append(lockfileResolvedDeps,
 				resolvedDepsForAdapter(lockfileAdapter, deps)...)
 			if !aggComplete {
@@ -1273,6 +1315,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 						Desc:            desc,
 					}
 				}
+				lockfileAdvsBefore := len(protoAdvs)
 				resolveDepAdvisories(ctx, advisoryResolution{
 					Ecosystem:    lockfileAdapter.Ecosystem,
 					Source:       lockfileMultiSrc,
@@ -1304,6 +1347,7 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 							newDirectLockfileFinding(lockfileAdapter, dep, adv))
 					},
 				}, lockfileResolveDeps)
+				captureEcoAdvs(lockfileAdapter.Ecosystem, lockfileAdvsBefore)
 			}
 		}
 	}
@@ -1473,40 +1517,102 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 			_ = os.Unsetenv("COMMIT0_CARGO_OFFLINE")
 		}
 
+		// ── 7b. Dispatch reachability, routing advisories by ecosystem ────────────
+		//
+		// Every subprocess plugin and every in-process analyzer receives ONLY the
+		// advisories for the ecosystems it owns (analyzer.Owned), so a polyglot scan
+		// never leaks an advisory into a transport that cannot decide it (e.g. an npm
+		// advisory into the Go plugin or the Dart analyzer, which would emit a
+		// contradictory verdict). This is the routing fix applied to BOTH transports:
+		// each subprocess plugin runs against its own routed request, and each
+		// in-process analyzer against its own routed advisory set.
+		//
+		// Incomplete signal (both transports): a reachability stage may signal partial
+		// analysis by emitting a synthetic UNKNOWN finding with
+		// Properties["synthetic"]="true" (the same marker host.Run appends on crash,
+		// run.go:syntheticUnknown, and analyzer.Run appends on panic/timeout). A stage
+		// that runs to completion but detects its own partiality (partial resolve,
+		// no-venv, dynamic dispatch, unparseable version) MUST emit the same shape.
+		// hasPartialityMarker reads it below to force exit 3, so a lost verdict is
+		// never a silent clean pass. A stage whose transport itself failed (pr.Err /
+		// res.Err) also marks the scan incomplete.
+		type reachResult struct {
+			name     string
+			findings []*commit0v1.Finding
+			failed   bool
+		}
+		var reachResults []reachResult
+
 		stopPluginRun := telemetry.Span("scan.plugin.run")
-		results, runErr := host.Run(ctx, reg, req, host.RunOptions{})
-		stopPluginRun()
-		if runErr != nil {
-			fmt.Fprintf(os.Stderr, "commit0-analyzer scan: host.Run: %v\n", runErr)
-			return policy.ExitOperationalError
+		for _, m := range reg.All() {
+			single := host.NewRegistry()
+			if addErr := single.Add(m); addErr != nil {
+				stopPluginRun()
+				fmt.Fprintf(os.Stderr, "commit0-analyzer scan: register %s plugin: %v\n", m.Name, addErr)
+				return policy.ExitOperationalError
+			}
+			routed := routedRequest(req, analyzer.Owned(advsByEco, ecosystemsForLanguages(m.Languages)))
+			results, runErr := host.Run(ctx, single, routed, host.RunOptions{})
+			if runErr != nil {
+				stopPluginRun()
+				fmt.Fprintf(os.Stderr, "commit0-analyzer scan: host.Run: %v\n", runErr)
+				return policy.ExitOperationalError
+			}
+			for _, pr := range results {
+				if pr.Err != nil {
+					fmt.Fprintf(os.Stderr, "commit0-analyzer scan: plugin %s error: %v\n",
+						pr.Manifest.Name, pr.Err)
+				}
+				reachResults = append(reachResults, reachResult{
+					name:     pr.Manifest.Name,
+					findings: pr.Findings,
+					failed:   pr.Err != nil,
+				})
+			}
 		}
 
-		// Collect all findings and detect plugin errors.
-		//
-		// Ecosystem-agnostic incomplete signal: a plugin may signal partial analysis by
-		// emitting a synthetic UNKNOWN finding with Properties["synthetic"]="true".
-		// This is the same marker that host.Run appends on crash (see run.go:syntheticUnknown);
-		// a clean plugin that detects its own partiality (e.g. partial resolve, no-venv,
-		// missing environment) MUST emit the same shape to propagate incomplete=true here.
-		//
-		// Wire contract (plugin author-facing):
-		//   1. For each advisory the plugin cannot decide (partial resolve, killed analysis,
-		//      dynamic dispatch, missing environment, unparseable version), emit:
-		//        Finding{Confidence: CONFIDENCE_UNKNOWN, Properties: {"synthetic": "true"}}
-		//   2. Return from the Analyze stream without error (normal EOF).
-		//   The host reads Properties["synthetic"]=="true" on CONFIDENCE_UNKNOWN findings
-		//   and sets incomplete=true at the policy gate, ensuring the scan exits 3 (not 0).
-		//
-		// This generalises the JS modelIncomplete→incomplete path (listNPMDeps returns a
-		// bool that callers must forward) into a single, language-agnostic detection pass
-		// that every ecosystem plugin can use without any per-language host-side wiring.
-		for _, pr := range results {
-			if pr.Err != nil {
-				fmt.Fprintf(os.Stderr, "commit0-analyzer scan: plugin %s error: %v\n",
-					pr.Manifest.Name, pr.Err)
+		// In-process analyzers (compiled into the host binary). analyzer.Run applies
+		// the same fail-closed crash isolation as the subprocess host: a panic or
+		// timeout degrades every routed advisory to synthetic UNKNOWN + incomplete,
+		// so a crashing analyzer widens coverage to UNKNOWN, never drops it.
+		for _, ip := range inProcRuns {
+			res := analyzer.Run(ctx, ip.analyzer, analyzer.Input{
+				ModuleRoot:        moduleRoot,
+				Closure:           ip.closure,
+				ClosureIncomplete: ip.closureIncomplete,
+				Advisories:        analyzer.Owned(advsByEco, ip.analyzer.Ecosystems()),
+			}, 0)
+			if res.Err != nil {
+				fmt.Fprintf(os.Stderr, "commit0-analyzer scan: analyzer %s error: %v\n",
+					ip.analyzer.Name(), res.Err)
+			}
+			// Propagate the analyzer's incomplete signal directly (in addition to the
+			// per-finding markers hasPartialityMarker reads), so a partial in-process
+			// analysis can never read as a clean pass even if a finding-level marker
+			// were ever missed (unknown ≠ safe).
+			if res.Incomplete {
 				incomplete = true
 			}
-			findings = append(findings, pr.Findings...)
+			reachResults = append(reachResults, reachResult{
+				name:     ip.analyzer.Name(),
+				findings: res.Findings,
+				failed:   res.Err != nil,
+			})
+		}
+		stopPluginRun()
+
+		// Deterministic aggregation across both transports: sort by stage name
+		// (matching host.Run's per-registry sort) so finding order is stable
+		// regardless of transport or dispatch order — a subprocess→in-process move
+		// keeps the same relative position (e.g. "pub-reachability").
+		sort.Slice(reachResults, func(i, j int) bool {
+			return reachResults[i].name < reachResults[j].name
+		})
+		for _, r := range reachResults {
+			if r.failed {
+				incomplete = true
+			}
+			findings = append(findings, r.findings...)
 		}
 	}
 	// Merge lockfile-static findings generated in step 5e. These were produced directly
@@ -1589,6 +1695,35 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 	}
 
 	return pol.EvaluateWithFlags(findings, policy.EvalFlags{Incomplete: incomplete})
+}
+
+// inProcRun is one in-process analyzer to dispatch, paired with the host-parsed
+// closure it consumes. Collected during the lockfile-adapter loop for every
+// EcosystemAdapter whose Analyzer is set and in scope (and reachability is not
+// skipped); dispatched in step 7 with advisories routed to the analyzer's owned
+// ecosystems.
+type inProcRun struct {
+	analyzer          analyzer.Analyzer
+	closure           []*commit0v1.ResolvedDependency
+	closureIncomplete bool
+}
+
+// routedRequest returns a request identical to req but with its advisory list
+// replaced by advs (the per-transport routed subset). Every other field is
+// preserved so the reachability stage still sees the module root, entrypoints,
+// build config, and closure. The proto message is rebuilt field-by-field rather
+// than value-copied because AnalyzeRequest embeds a protoimpl.MessageState that
+// must not be copied (go vet copylocks).
+func routedRequest(req *commit0v1.AnalyzeRequest, advs []*commit0v1.Advisory) *commit0v1.AnalyzeRequest {
+	return &commit0v1.AnalyzeRequest{
+		ModuleRoot:           req.GetModuleRoot(),
+		Entrypoints:          req.GetEntrypoints(),
+		BuildConfig:          req.GetBuildConfig(),
+		Advisories:           advs,
+		EcosystemBuildConfig: req.GetEcosystemBuildConfig(),
+		ResolvedDeps:         req.GetResolvedDeps(),
+		ClosureIncomplete:    req.GetClosureIncomplete(),
+	}
 }
 
 // hasPartialityMarker reports whether any finding in the slice signals
