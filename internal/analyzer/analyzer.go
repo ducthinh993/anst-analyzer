@@ -26,14 +26,19 @@ type Input struct {
 	// ModuleRoot is the absolute project root to analyze.
 	ModuleRoot string
 
-	// Closure is the host-parsed resolved dependency closure (for lockfile
-	// ecosystems). It is the same data the subprocess contract carries as
-	// resolved_deps; in-process it is a function argument rather than a wire
-	// message, so an analyzer never re-parses the lockfile.
+	// Closure is the host-parsed resolved dependency closure, provided for
+	// analyzers that consume it (the same data the subprocess contract carries as
+	// resolved_deps, but as a function argument rather than a wire message). Not
+	// every analyzer uses it: the Dart/Pub analyzer, for example, derives its own
+	// used-import closure from project source + package_config.json and consults
+	// only ClosureIncomplete. An analyzer that does not consume Closure may ignore
+	// this field.
 	Closure []*commit0v1.ResolvedDependency
 
-	// ClosureIncomplete is the host's signal that the closure is partial. A partial
-	// closure forbids any NOT_REACHABLE verdict (unknown ≠ safe).
+	// ClosureIncomplete is the host's signal that the resolved closure is partial.
+	// Every analyzer MUST honor it: a partial closure forbids any NOT_REACHABLE
+	// verdict (unknown ≠ safe), because a missing dependency could reference the
+	// advisory package.
 	ClosureIncomplete bool
 
 	// Advisories are the vulnerabilities to decide, PRE-FILTERED to this analyzer's

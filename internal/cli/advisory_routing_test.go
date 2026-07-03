@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,6 +11,53 @@ import (
 	"github.com/commit0-dev/commit0-analyzer/internal/analyzer"
 	commit0v1 "github.com/commit0-dev/commit0-analyzer/pkg/contract/commit0v1"
 )
+
+// stubAnalyzer is a minimal analyzer.Analyzer used only to exercise registration
+// guards (its Analyze is never run).
+type stubAnalyzer struct{}
+
+func (stubAnalyzer) Name() string        { return "stub" }
+func (stubAnalyzer) Ecosystems() []string { return []string{advisory.EcosystemMaven} }
+func (stubAnalyzer) Analyze(context.Context, analyzer.Input) ([]*commit0v1.Finding, bool, error) {
+	return nil, false, nil
+}
+
+// TestRegisterEcosystemAdapter_HasPluginAndAnalyzerPanics guards the contradictory
+// dual-transport case: setting both HasPlugin and Analyzer would run the
+// subprocess plugin with an empty resolved_deps closure (false NOT_REACHABLE
+// hazard) plus duplicate findings. Registration must fail closed (panic).
+func TestRegisterEcosystemAdapter_HasPluginAndAnalyzerPanics(t *testing.T) {
+	defer func() {
+		r := recover()
+		require.NotNil(t, r, "an adapter with both HasPlugin and Analyzer must panic")
+		msg, ok := r.(string)
+		require.True(t, ok, "panic value must be a string")
+		assert.Contains(t, msg, "EMPTY resolved_deps closure")
+	}()
+	RegisterEcosystemAdapter(EcosystemAdapter{
+		Ecosystem:     advisory.EcosystemMaven,
+		Language:      "java",
+		MaxConfidence: ceilingPackage,
+		ParseLockfile: func(string) ([]ResolvedDep, bool, error) { return nil, true, nil },
+		HasPlugin:     true,
+		Analyzer:      stubAnalyzer{},
+	})
+}
+
+// TestRegisteredAdaptersSatisfyInvariants closes the seeded-literal escape: every
+// registered adapter — including the four seeded var-literal entries (Go/JS/Rust/
+// Python) that bypass RegisterEcosystemAdapter — must satisfy the registration
+// invariants. validateAdapterInvariants panics on a violation, so a passing run
+// proves the init-time validation pass covers the seeded entries.
+func TestRegisteredAdaptersSatisfyInvariants(t *testing.T) {
+	adapters := EcosystemAdapters()
+	require.NotEmpty(t, adapters)
+	for _, a := range adapters {
+		a := a
+		assert.NotPanics(t, func() { validateAdapterInvariants(a) },
+			"registered adapter %q must satisfy the registration invariants", a.Language)
+	}
+}
 
 // TestEcosystemsForLanguages_JSOwnsNpm proves the subprocess routing key: a JS
 // plugin manifest (Languages ["js","ts"]) maps to exactly the npm ecosystem, so

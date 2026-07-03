@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/commit0-dev/commit0-analyzer/internal/advisory"
 	"github.com/commit0-dev/commit0-analyzer/internal/advisory/ghfetch"
@@ -1543,6 +1544,26 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 		}
 		var reachResults []reachResult
 
+		// Routing reconciliation (fail-closed): every resolved advisory MUST have
+		// been bucketed into advsByEco by its resolve loop's captureEcoAdvs. If a
+		// future resolveDepAdvisories call site forgets to capture, that ecosystem's
+		// bucket is short, its reachability stage receives zero advisories, and the
+		// scan could exit 0 clean — a false-clean. A count mismatch here (never an
+		// equality we depend on for correctness, only a floor) degrades the scan to
+		// incomplete rather than silently dropping coverage.
+		bucketed := 0
+		for _, advs := range advsByEco {
+			bucketed += len(advs)
+		}
+		if bucketed != len(protoAdvs) {
+			fmt.Fprintf(os.Stderr,
+				"warning: advisory routing reconciliation mismatch (%d resolved, %d routed by "+
+					"ecosystem); some advisories may not reach their reachability stage; "+
+					"scan marked incomplete\n",
+				len(protoAdvs), bucketed)
+			incomplete = true
+		}
+
 		stopPluginRun := telemetry.Span("scan.plugin.run")
 		for _, m := range reg.All() {
 			single := host.NewRegistry()
@@ -1552,12 +1573,9 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 				return policy.ExitOperationalError
 			}
 			routed := routedRequest(req, analyzer.Owned(advsByEco, ecosystemsForLanguages(m.Languages)))
-			results, runErr := host.Run(ctx, single, routed, host.RunOptions{})
-			if runErr != nil {
-				stopPluginRun()
-				fmt.Fprintf(os.Stderr, "commit0-analyzer scan: host.Run: %v\n", runErr)
-				return policy.ExitOperationalError
-			}
+			// host.Run never returns a non-nil error: a plugin crash/timeout lands in
+			// pr.Err (with a synthetic UNKNOWN appended to pr.Findings), handled below.
+			results, _ := host.Run(ctx, single, routed, host.RunOptions{})
 			for _, pr := range results {
 				if pr.Err != nil {
 					fmt.Fprintf(os.Stderr, "commit0-analyzer scan: plugin %s error: %v\n",
@@ -1574,14 +1592,18 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 		// In-process analyzers (compiled into the host binary). analyzer.Run applies
 		// the same fail-closed crash isolation as the subprocess host: a panic or
 		// timeout degrades every routed advisory to synthetic UNKNOWN + incomplete,
-		// so a crashing analyzer widens coverage to UNKNOWN, never drops it.
+		// so a crashing analyzer widens coverage to UNKNOWN, never drops it. The
+		// per-analyzer deadline bounds a wedged engine (e.g. a source read blocked on
+		// a FIFO named *.dart) so it can never hang the scan forever; the subprocess
+		// host applies no default deadline (RunOptions.Timeout=0), so this is a
+		// deliberate in-process floor rather than a mirror of an existing constant.
 		for _, ip := range inProcRuns {
 			res := analyzer.Run(ctx, ip.analyzer, analyzer.Input{
 				ModuleRoot:        moduleRoot,
 				Closure:           ip.closure,
 				ClosureIncomplete: ip.closureIncomplete,
 				Advisories:        analyzer.Owned(advsByEco, ip.analyzer.Ecosystems()),
-			}, 0)
+			}, defaultAnalyzerTimeout)
 			if res.Err != nil {
 				fmt.Fprintf(os.Stderr, "commit0-analyzer scan: analyzer %s error: %v\n",
 					ip.analyzer.Name(), res.Err)
@@ -1697,6 +1719,14 @@ func runScan(ctx context.Context, moduleRoot string, flags scanFlags) int {
 	return pol.EvaluateWithFlags(findings, policy.EvalFlags{Incomplete: incomplete})
 }
 
+// defaultAnalyzerTimeout bounds a single in-process analyzer run so a wedged
+// engine (e.g. a source read blocked on a FIFO the walker opens) can never hang
+// the whole scan. On expiry analyzer.Run degrades every routed advisory to a
+// synthetic UNKNOWN (unknown ≠ safe), the same fail-closed path as a panic. The
+// subprocess host applies no default per-plugin deadline; this floor is
+// in-process-specific because a goroutine cannot be killed like a process.
+const defaultAnalyzerTimeout = 2 * time.Minute
+
 // inProcRun is one in-process analyzer to dispatch, paired with the host-parsed
 // closure it consumes. Collected during the lockfile-adapter loop for every
 // EcosystemAdapter whose Analyzer is set and in scope (and reachability is not
@@ -1710,20 +1740,12 @@ type inProcRun struct {
 
 // routedRequest returns a request identical to req but with its advisory list
 // replaced by advs (the per-transport routed subset). Every other field is
-// preserved so the reachability stage still sees the module root, entrypoints,
-// build config, and closure. The proto message is rebuilt field-by-field rather
-// than value-copied because AnalyzeRequest embeds a protoimpl.MessageState that
-// must not be copied (go vet copylocks).
+// preserved via a deep proto.Clone so a future AnalyzeRequest field can never be
+// silently dropped from a routed request; only Advisories is overridden.
 func routedRequest(req *commit0v1.AnalyzeRequest, advs []*commit0v1.Advisory) *commit0v1.AnalyzeRequest {
-	return &commit0v1.AnalyzeRequest{
-		ModuleRoot:           req.GetModuleRoot(),
-		Entrypoints:          req.GetEntrypoints(),
-		BuildConfig:          req.GetBuildConfig(),
-		Advisories:           advs,
-		EcosystemBuildConfig: req.GetEcosystemBuildConfig(),
-		ResolvedDeps:         req.GetResolvedDeps(),
-		ClosureIncomplete:    req.GetClosureIncomplete(),
-	}
+	out := proto.Clone(req).(*commit0v1.AnalyzeRequest)
+	out.Advisories = advs
+	return out
 }
 
 // hasPartialityMarker reports whether any finding in the slice signals

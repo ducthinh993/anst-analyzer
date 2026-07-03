@@ -3,14 +3,15 @@ package pub
 import (
 	"context"
 
+	"github.com/commit0-dev/commit0-analyzer/internal/advisory"
 	"github.com/commit0-dev/commit0-analyzer/internal/analyzer"
 	commit0v1 "github.com/commit0-dev/commit0-analyzer/pkg/contract/commit0v1"
 )
 
-// ecosystem is the OSV ecosystem name this analyzer owns. It matches
-// advisory.EcosystemPub host-side, which is how the host routes only "Pub"
-// advisories into Analyze — a non-Pub advisory never reaches the Dart engine.
-const ecosystem = "Pub"
+// ecosystem is the OSV ecosystem name this analyzer owns. It is the same constant
+// the host routes on (advisory.EcosystemPub), so ownership can never drift — a
+// non-Pub advisory never reaches the Dart engine.
+const ecosystem = advisory.EcosystemPub
 
 // Reachability adapts the used-import Analyzer engine to the in-process
 // analyzer.Analyzer seam. It is stateless; each Analyze call builds a fresh
